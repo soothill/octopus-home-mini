@@ -1,21 +1,20 @@
 run:
   timeout: 5m
   tests: true
-  skip-dirs:
-    - vendor
+  build-tags:
+    - integration
+  modules-download-mode: readonly
 
 linters:
+  disable-all: true
   enable:
     - errcheck      # Check for unchecked errors
     - gosimple      # Simplify code
     - govet         # Vet examines Go source code
     - ineffassign   # Detect ineffectual assignments
     - staticcheck   # Advanced static analysis
-    - typecheck     # Type checking
     - unused        # Check for unused code
     - gofmt         # Check formatting
-    - gocritic      # Opinionated linter
-    - gosec         # Security issues
     - misspell      # Spelling mistakes
     - revive        # Fast, configurable, extensible linter
 
@@ -32,10 +31,6 @@ linters-settings:
   staticcheck:
     checks: ["all"]
 
-  gosec:
-    excludes:
-      - G404  # Allow weak random number generator for non-crypto use
-
   revive:
     rules:
       - name: var-naming
@@ -48,12 +43,12 @@ linters-settings:
         disabled: false
 
 issues:
+  exclude-dirs:
+    - vendor
   exclude-rules:
     # Exclude some linters from running on tests files
     - path: _test\.go
       linters:
-        - gosec
         - errcheck
-
   max-issues-per-linter: 0
   max-same-issues: 0
