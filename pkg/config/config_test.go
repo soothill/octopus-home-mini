@@ -66,16 +66,16 @@ func TestLoad(t *testing.T) {
 			errContains: "INFLUXDB_TOKEN",
 		},
 		{
-			name: "missing slack webhook",
+			name: "slack disabled",
 			envVars: map[string]string{
 				"OCTOPUS_API_KEY":        "test_api_key",
 				"OCTOPUS_ACCOUNT_NUMBER": "A-12345678",
 				"INFLUXDB_URL":           "http://localhost:8086",
 				"INFLUXDB_TOKEN":         "test_token",
 				"INFLUXDB_ORG":           "test_org",
+				"SLACK_ENABLED":          "false",
 			},
-			wantErr:     true,
-			errContains: "SLACK_WEBHOOK_URL",
+			wantErr: false,
 		},
 		{
 			name: "custom poll interval",

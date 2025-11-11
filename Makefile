@@ -1,4 +1,4 @@
-.PHONY: build run test clean install deps setup configure test-slack test-influx verify-config
+.PHONY: build run test clean install deps setup configure get-api-key test-slack test-influx verify-config
 
 # Setup and Configuration
 setup: deps
@@ -8,6 +8,10 @@ setup: deps
 # Interactive configuration wizard
 configure:
 	@bash scripts/configure.sh
+
+# Help get Octopus API key
+get-api-key:
+	@bash scripts/get-api-key.sh
 
 # Test Slack webhook connection
 test-slack:
@@ -98,6 +102,7 @@ help:
 	@echo "Setup & Configuration:"
 	@echo "  setup         - Complete setup wizard (deps + configure)"
 	@echo "  configure     - Interactive configuration wizard"
+	@echo "  get-api-key   - Help get your Octopus Energy API key"
 	@echo "  test-slack    - Test Slack webhook connection"
 	@echo "  test-influx   - Test InfluxDB connection"
 	@echo "  verify-config - Verify all configuration settings"

@@ -76,20 +76,33 @@ echo ""
 
 # Slack Configuration
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BLUE}3. Slack Configuration${NC}"
+echo -e "${BLUE}3. Slack Configuration (Optional)${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo "Slack notifications alert you of failures and important events."
-echo ""
-echo "To create a webhook:"
-echo "  1. Visit: https://api.slack.com/apps"
-echo "  2. Create a new app or use an existing one"
-echo "  3. Enable Incoming Webhooks"
-echo "  4. Create a webhook for your desired channel"
+echo "This is optional - you can disable it if you don't need notifications."
 echo ""
 
-read_with_default "Slack Webhook URL [${SLACK_WEBHOOK_URL}]: " "${SLACK_WEBHOOK_URL}" SLACK_WEBHOOK_URL
-echo ""
+read -p "Enable Slack notifications? (Y/n): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    SLACK_ENABLED="true"
+    echo ""
+    echo "To create a webhook:"
+    echo "  1. Visit: https://api.slack.com/apps"
+    echo "  2. Create a new app or use an existing one"
+    echo "  3. Enable Incoming Webhooks"
+    echo "  4. Create a webhook for your desired channel"
+    echo ""
+
+    read_with_default "Slack Webhook URL [${SLACK_WEBHOOK_URL}]: " "${SLACK_WEBHOOK_URL}" SLACK_WEBHOOK_URL
+    echo ""
+else
+    SLACK_ENABLED="false"
+    SLACK_WEBHOOK_URL=""
+    echo "Slack notifications disabled"
+    echo ""
+fi
 
 # Application Settings
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -116,7 +129,8 @@ INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
 INFLUXDB_ORG=${INFLUXDB_ORG}
 INFLUXDB_BUCKET=${INFLUXDB_BUCKET}
 
-# Slack Configuration
+# Slack Configuration (Optional)
+SLACK_ENABLED=${SLACK_ENABLED}
 SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
 
 # Application Configuration
@@ -130,10 +144,12 @@ echo ""
 
 # Offer to test connections
 echo -e "${CYAN}Would you like to test your configuration now?${NC}"
-read -p "Test Slack webhook? (y/N): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    bash scripts/test-slack.sh
+if [ "$SLACK_ENABLED" = "true" ]; then
+    read -p "Test Slack webhook? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        bash scripts/test-slack.sh
+    fi
 fi
 
 read -p "Test InfluxDB connection? (y/N): " -n 1 -r

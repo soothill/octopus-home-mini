@@ -21,8 +21,9 @@ type Config struct {
 	InfluxDBOrg    string
 	InfluxDBBucket string
 
-	// Slack
+	// Slack (optional)
 	SlackWebhookURL string
+	SlackEnabled    bool
 
 	// Application settings
 	PollInterval time.Duration
@@ -36,6 +37,8 @@ func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	pollIntervalSec := getEnvAsInt("POLL_INTERVAL_SECONDS", 30)
+	slackWebhookURL := getEnv("SLACK_WEBHOOK_URL", "")
+	slackEnabled := getEnvAsBool("SLACK_ENABLED", true) && slackWebhookURL != ""
 
 	cfg := &Config{
 		OctopusAPIKey:        getEnv("OCTOPUS_API_KEY", ""),
@@ -44,7 +47,8 @@ func Load() (*Config, error) {
 		InfluxDBToken:        getEnv("INFLUXDB_TOKEN", ""),
 		InfluxDBOrg:          getEnv("INFLUXDB_ORG", ""),
 		InfluxDBBucket:       getEnv("INFLUXDB_BUCKET", "octopus_energy"),
-		SlackWebhookURL:      getEnv("SLACK_WEBHOOK_URL", ""),
+		SlackWebhookURL:      slackWebhookURL,
+		SlackEnabled:         slackEnabled,
 		PollInterval:         time.Duration(pollIntervalSec) * time.Second,
 		CacheDir:             getEnv("CACHE_DIR", "./cache"),
 		LogLevel:             getEnv("LOG_LEVEL", "info"),
@@ -74,9 +78,6 @@ func (c *Config) Validate() error {
 	if c.InfluxDBOrg == "" {
 		return fmt.Errorf("INFLUXDB_ORG is required")
 	}
-	if c.SlackWebhookURL == "" {
-		return fmt.Errorf("SLACK_WEBHOOK_URL is required")
-	}
 	return nil
 }
 
@@ -93,4 +94,16 @@ func getEnvAsInt(key string, defaultValue int) int {
 		return value
 	}
 	return defaultValue
+}
+
+func getEnvAsBool(key string, defaultValue bool) bool {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := strconv.ParseBool(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+	return value
 }

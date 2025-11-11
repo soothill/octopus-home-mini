@@ -22,10 +22,31 @@ type Monitor struct {
 	octopusClient  *octopus.Client
 	influxClient   *influx.Client
 	cache          *cache.Cache
-	slackNotifier  *slack.Notifier
+	slackNotifier  *slack.Notifier // May be nil if Slack is disabled
 	lastPollTime   time.Time
 	influxHealthy  bool
 	consecutiveErr int
+}
+
+// sendSlackError sends an error notification to Slack if enabled
+func (m *Monitor) sendSlackError(component, message string) {
+	if m.slackNotifier != nil {
+		m.slackNotifier.SendError(component, message)
+	}
+}
+
+// sendSlackWarning sends a warning notification to Slack if enabled
+func (m *Monitor) sendSlackWarning(component, message string) {
+	if m.slackNotifier != nil {
+		m.slackNotifier.SendWarning(component, message)
+	}
+}
+
+// sendSlackInfo sends an info notification to Slack if enabled
+func (m *Monitor) sendSlackInfo(title, message string) {
+	if m.slackNotifier != nil {
+		m.slackNotifier.SendInfo(title, message)
+	}
 }
 
 func main() {
@@ -43,8 +64,14 @@ func main() {
 		log.Fatalf("Failed to initialize cache: %v", err)
 	}
 
-	// Initialize Slack notifier
-	slackNotifier := slack.NewNotifier(cfg.SlackWebhookURL)
+	// Initialize Slack notifier (may be nil if not configured)
+	var slackNotifier *slack.Notifier
+	if cfg.SlackEnabled {
+		slackNotifier = slack.NewNotifier(cfg.SlackWebhookURL)
+		log.Println("Slack notifications enabled")
+	} else {
+		log.Println("Slack notifications disabled")
+	}
 
 	// Initialize Octopus client
 	octopusClient := octopus.NewClient(cfg.OctopusAPIKey, cfg.OctopusAccountNumber)
@@ -53,7 +80,6 @@ func main() {
 	ctx := context.Background()
 	if err := octopusClient.Initialize(ctx); err != nil {
 		log.Fatalf("Failed to initialize Octopus client: %v", err)
-		slackNotifier.SendError("Initialization", fmt.Sprintf("Failed to initialize Octopus client: %v", err))
 	}
 
 	log.Println("Octopus client initialized successfully")
@@ -62,7 +88,9 @@ func main() {
 	influxClient, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket)
 	if err != nil {
 		log.Printf("Warning: Failed to connect to InfluxDB: %v. Will cache data locally.", err)
-		slackNotifier.SendWarning("InfluxDB", fmt.Sprintf("Failed to connect to InfluxDB: %v. Caching data locally.", err))
+		if slackNotifier != nil {
+			slackNotifier.SendWarning("InfluxDB", fmt.Sprintf("Failed to connect to InfluxDB: %v. Caching data locally.", err))
+		}
 	} else {
 		log.Println("InfluxDB client initialized successfully")
 		defer influxClient.Close()
@@ -80,7 +108,9 @@ func main() {
 	}
 
 	// Send startup notification
-	slackNotifier.SendInfo("Monitor Started", "Octopus Home Mini monitor has started successfully")
+	if slackNotifier != nil {
+		slackNotifier.SendInfo("Monitor Started", "Octopus Home Mini monitor has started successfully")
+	}
 
 	// Try to sync any cached data on startup
 	if monitor.influxHealthy {
@@ -102,9 +132,9 @@ func main() {
 
 	// Send shutdown notification
 	if monitor.cache.Count() > 0 {
-		slackNotifier.SendWarning("Monitor Stopped", fmt.Sprintf("Monitor stopped with %d data points in cache", monitor.cache.Count()))
+		monitor.sendSlackWarning("Monitor Stopped", fmt.Sprintf("Monitor stopped with %d data points in cache", monitor.cache.Count()))
 	} else {
-		slackNotifier.SendInfo("Monitor Stopped", "Monitor stopped gracefully")
+		monitor.sendSlackInfo("Monitor Stopped", "Monitor stopped gracefully")
 	}
 
 	log.Println("Monitor stopped")
@@ -145,7 +175,7 @@ func (m *Monitor) poll() {
 
 		// Alert if consecutive errors reach threshold
 		if m.consecutiveErr >= 3 {
-			m.slackNotifier.SendError("Octopus API", fmt.Sprintf("Failed to fetch telemetry data (consecutive errors: %d): %v", m.consecutiveErr, err))
+			m.sendSlackError("Octopus API", fmt.Sprintf("Failed to fetch telemetry data (consecutive errors: %d): %v", m.consecutiveErr, err))
 			m.consecutiveErr = 0 // Reset after alerting
 		}
 		return
@@ -170,7 +200,7 @@ func (m *Monitor) poll() {
 		if err := m.writeToInflux(telemetryData); err != nil {
 			log.Printf("Failed to write to InfluxDB: %v", err)
 			m.influxHealthy = false
-			m.slackNotifier.SendError("InfluxDB", fmt.Sprintf("Failed to write data: %v. Switching to cache mode.", err))
+			m.sendSlackError("InfluxDB", fmt.Sprintf("Failed to write data: %v. Switching to cache mode.", err))
 
 			// Cache the data instead
 			m.cacheData(telemetryData)
@@ -225,7 +255,7 @@ func (m *Monitor) cacheData(telemetryData []octopus.TelemetryData) {
 
 	if err := m.cache.Add(dataPoints); err != nil {
 		log.Printf("Error caching data: %v", err)
-		m.slackNotifier.SendError("Cache", fmt.Sprintf("Failed to cache data: %v", err))
+		m.sendSlackError("Cache", fmt.Sprintf("Failed to cache data: %v", err))
 	} else {
 		log.Printf("Cached %d data points (total in cache: %d)", len(dataPoints), m.cache.Count())
 	}
@@ -244,10 +274,10 @@ func (m *Monitor) checkInfluxHealth(ctx context.Context) {
 	// Alert on state change
 	if wasHealthy && !m.influxHealthy {
 		log.Println("InfluxDB connection lost")
-		m.slackNotifier.SendError("InfluxDB", "Connection to InfluxDB lost. Switching to cache mode.")
+		m.sendSlackError("InfluxDB", "Connection to InfluxDB lost. Switching to cache mode.")
 	} else if !wasHealthy && m.influxHealthy {
 		log.Println("InfluxDB connection restored")
-		m.slackNotifier.SendInfo("InfluxDB", "Connection to InfluxDB restored. Syncing cached data...")
+		m.sendSlackInfo("InfluxDB", "Connection to InfluxDB restored. Syncing cached data...")
 		m.syncCache()
 	}
 }
@@ -261,7 +291,7 @@ func (m *Monitor) tryReconnectInflux(ctx context.Context) {
 	if err := m.influxClient.CheckConnection(ctx); err == nil {
 		log.Println("InfluxDB connection restored!")
 		m.influxHealthy = true
-		m.slackNotifier.SendInfo("InfluxDB", "Connection restored. Syncing cached data...")
+		m.sendSlackInfo("InfluxDB", "Connection restored. Syncing cached data...")
 		m.syncCache()
 	}
 }
@@ -291,7 +321,7 @@ func (m *Monitor) syncCache() {
 
 		if err := m.influxClient.WritePointDirectly(ctx, dp); err != nil {
 			log.Printf("Error writing cached point: %v", err)
-			m.slackNotifier.SendError("Cache Sync", fmt.Sprintf("Failed to sync cached data: %v", err))
+			m.sendSlackError("Cache Sync", fmt.Sprintf("Failed to sync cached data: %v", err))
 			return
 		}
 		successCount++
@@ -302,9 +332,9 @@ func (m *Monitor) syncCache() {
 	// Clear cache after successful sync
 	if err := m.cache.Clear(); err != nil {
 		log.Printf("Error clearing cache: %v", err)
-		m.slackNotifier.SendError("Cache", fmt.Sprintf("Failed to clear cache: %v", err))
+		m.sendSlackError("Cache", fmt.Sprintf("Failed to clear cache: %v", err))
 	} else {
 		log.Printf("Successfully synced %d cached data points", successCount)
-		m.slackNotifier.SendInfo("Cache Sync", fmt.Sprintf("Successfully synced %d cached data points to InfluxDB", successCount))
+		m.sendSlackInfo("Cache Sync", fmt.Sprintf("Successfully synced %d cached data points to InfluxDB", successCount))
 	}
 }

@@ -71,9 +71,10 @@ check_required "INFLUXDB_BUCKET" "$INFLUXDB_BUCKET" "Bucket to store data"
 echo ""
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BLUE}Slack Configuration${NC}"
+echo -e "${BLUE}Slack Configuration (Optional)${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-check_required "SLACK_WEBHOOK_URL" "$SLACK_WEBHOOK_URL" "Get it from: https://api.slack.com/apps"
+check_optional "SLACK_ENABLED" "$SLACK_ENABLED" "true"
+check_optional "SLACK_WEBHOOK_URL" "$SLACK_WEBHOOK_URL" "none (notifications disabled)"
 echo ""
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
