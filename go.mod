@@ -1,6 +1,6 @@
 module github.com/soothill/octopus-home-mini
 
-go 1.22
+go 1.23
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0
