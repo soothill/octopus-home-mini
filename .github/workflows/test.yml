@@ -51,6 +51,15 @@ jobs:
     - name: Verify module
       run: |
         go version
+        echo "=== Current directory ==="
+        pwd
+        ls -la
+        echo "=== go.mod content ==="
+        cat go.mod
+        echo "=== pkg directory ==="
+        ls -la pkg/
+        echo "=== cmd directory ==="
+        ls -la cmd/
         go mod verify
         go mod download
 
@@ -81,7 +90,14 @@ jobs:
         cache: true
 
     - name: Download dependencies
-      run: go mod download
+      run: |
+        echo "=== go.mod content ==="
+        cat go.mod
+        echo "=== Directory structure ==="
+        find . -type d -name "pkg" -o -name "cmd"
+        echo "=== Package files ==="
+        ls -la pkg/
+        go mod download
 
     - name: Build
       run: make build
