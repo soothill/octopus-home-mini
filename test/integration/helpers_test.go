@@ -45,7 +45,7 @@ func SkipIfNoInfluxDB(t *testing.T, cfg *config.Config) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket)
+	client, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket, cfg.InfluxDBMeasurement)
 	if err != nil {
 		t.Skipf("InfluxDB not available: %v", err)
 		return

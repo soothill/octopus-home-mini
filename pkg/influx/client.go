@@ -21,6 +21,7 @@ type Client struct {
 	writeAPI       api.WriteAPI
 	bucket         string
 	org            string
+	measurement    string
 	errorHandler   ErrorHandler
 	stopChan       chan struct{}
 	circuitBreaker *gobreaker.CircuitBreaker
@@ -36,12 +37,12 @@ type DataPoint struct {
 }
 
 // NewClient creates a new InfluxDB client
-func NewClient(url, token, org, bucket string) (*Client, error) {
-	return NewClientWithErrorHandler(url, token, org, bucket, nil)
+func NewClient(url, token, org, bucket, measurement string) (*Client, error) {
+	return NewClientWithErrorHandler(url, token, org, bucket, measurement, nil)
 }
 
 // NewClientWithErrorHandler creates a new InfluxDB client with a custom error handler
-func NewClientWithErrorHandler(url, token, org, bucket string, errorHandler ErrorHandler) (*Client, error) {
+func NewClientWithErrorHandler(url, token, org, bucket, measurement string, errorHandler ErrorHandler) (*Client, error) {
 	client := influxdb2.NewClient(url, token)
 
 	// Test connection
@@ -83,6 +84,7 @@ func NewClientWithErrorHandler(url, token, org, bucket string, errorHandler Erro
 		writeAPI:       writeAPI,
 		bucket:         bucket,
 		org:            org,
+		measurement:    measurement,
 		errorHandler:   errorHandler,
 		stopChan:       make(chan struct{}),
 		circuitBreaker: gobreaker.NewCircuitBreaker(cbSettings),
@@ -112,7 +114,7 @@ func (c *Client) monitorErrors() {
 // WriteDataPoint writes a single data point to InfluxDB
 func (c *Client) WriteDataPoint(dp DataPoint) error {
 	p := influxdb2.NewPoint(
-		"energy_consumption",
+		c.measurement,
 		map[string]string{
 			"source": "octopus_home_mini",
 		},
@@ -179,7 +181,7 @@ func (c *Client) Close() {
 func (c *Client) WritePointDirectly(ctx context.Context, dp DataPoint) error {
 	_, err := c.circuitBreaker.Execute(func() (interface{}, error) {
 		p := write.NewPoint(
-			"energy_consumption",
+			c.measurement,
 			map[string]string{
 				"source": "octopus_home_mini",
 			},

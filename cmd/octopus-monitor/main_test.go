@@ -135,7 +135,7 @@ func TestMonitor_CheckInfluxHealth(t *testing.T) {
 
 	t.Run("influx client with invalid connection", func(t *testing.T) {
 		// Create a client with an invalid URL
-		influxClient, err := influx.NewClient("http://invalid-host:8086", "token", "org", "bucket")
+		influxClient, err := influx.NewClient("http://invalid-host:8086", "token", "org", "bucket", "energy_consumption")
 		if err != nil {
 			t.Skip("Cannot create InfluxDB client with invalid host (expected for this test)")
 			return
@@ -193,7 +193,7 @@ func TestMonitor_TryReconnectInflux(t *testing.T) {
 
 	t.Run("influx client still unhealthy", func(t *testing.T) {
 		// Create a client with an invalid URL
-		influxClient, err := influx.NewClient("http://invalid-host:8086", "token", "org", "bucket")
+		influxClient, err := influx.NewClient("http://invalid-host:8086", "token", "org", "bucket", "energy_consumption")
 		if err != nil {
 			t.Skip("Cannot create InfluxDB client with invalid host (expected for this test)")
 			return
@@ -234,7 +234,7 @@ func TestMonitor_WriteToInflux(t *testing.T) {
 		defer cacheStore.Clear()
 
 		// Create a client with an invalid URL
-		influxClient, err := influx.NewClient("http://invalid-host:8086", "token", "org", "bucket")
+		influxClient, err := influx.NewClient("http://invalid-host:8086", "token", "org", "bucket", "energy_consumption")
 		if err != nil {
 			t.Skip("Cannot create InfluxDB client with invalid host (expected for this test)")
 			return
@@ -276,7 +276,7 @@ func TestMonitor_WriteToInflux(t *testing.T) {
 		}
 		defer cacheStore.Clear()
 
-		influxClient, err := influx.NewClient("http://localhost:8086", "token", "org", "bucket")
+		influxClient, err := influx.NewClient("http://localhost:8086", "token", "org", "bucket", "energy_consumption")
 		if err != nil {
 			t.Skip("Cannot create InfluxDB client (expected for local testing)")
 			return
@@ -311,7 +311,7 @@ func TestMonitor_SyncCache(t *testing.T) {
 		}
 		defer cacheStore.Clear()
 
-		influxClient, err := influx.NewClient("http://localhost:8086", "token", "org", "bucket")
+		influxClient, err := influx.NewClient("http://localhost:8086", "token", "org", "bucket", "energy_consumption")
 		if err != nil {
 			t.Skip("Cannot create InfluxDB client (expected for local testing)")
 			return
@@ -356,7 +356,7 @@ func TestMonitor_SyncCache(t *testing.T) {
 		}
 
 		// Create client with invalid host
-		influxClient, err := influx.NewClient("http://invalid-host:8086", "token", "org", "bucket")
+		influxClient, err := influx.NewClient("http://invalid-host:8086", "token", "org", "bucket", "energy_consumption")
 		if err != nil {
 			t.Skip("Cannot create InfluxDB client with invalid host (expected for this test)")
 			return

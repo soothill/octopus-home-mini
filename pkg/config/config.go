@@ -41,10 +41,11 @@ type Config struct {
 	OctopusAccountNumber string
 
 	// InfluxDB
-	InfluxDBURL    string
-	InfluxDBToken  string
-	InfluxDBOrg    string
-	InfluxDBBucket string
+	InfluxDBURL         string
+	InfluxDBToken       string
+	InfluxDBOrg         string
+	InfluxDBBucket      string
+	InfluxDBMeasurement string
 
 	// Slack (optional)
 	SlackWebhookURL string
@@ -54,6 +55,24 @@ type Config struct {
 	PollInterval time.Duration
 	CacheDir     string
 	LogLevel     string
+
+	// Timeout configurations
+	InfluxConnectTimeout      time.Duration
+	InfluxWriteTimeout        time.Duration
+	PollTimeout               time.Duration
+	ShutdownTimeout           time.Duration
+	CacheSyncTimeout          time.Duration
+	ReconnectMaxElapsedTime   time.Duration
+	ConsecutiveErrorThreshold int
+	MaxBackoffFactor          int
+
+	// Cache cleanup settings
+	CacheCleanupEnabled  bool
+	CacheCleanupInterval time.Duration
+	CacheRetentionDays   int
+
+	// Health server settings
+	HealthServerAddr string
 }
 
 // Load reads configuration from environment variables
@@ -73,18 +92,49 @@ func Load() (*Config, error) {
 	// Normalize log level to lowercase
 	logLevel := strings.ToLower(getEnv("LOG_LEVEL", "info"))
 
+	// Timeout configurations
+	influxConnectTimeout := getEnvAsInt("INFLUX_CONNECT_TIMEOUT_SECONDS", 30)
+	influxWriteTimeout := getEnvAsInt("INFLUX_WRITE_TIMEOUT_SECONDS", 10)
+	pollTimeout := getEnvAsInt("POLL_TIMEOUT_SECONDS", 30)
+	shutdownTimeout := getEnvAsInt("SHUTDOWN_TIMEOUT_SECONDS", 5)
+	cacheSyncTimeout := getEnvAsInt("CACHE_SYNC_TIMEOUT_SECONDS", 60)
+	reconnectMaxElapsed := getEnvAsInt("RECONNECT_MAX_ELAPSED_SECONDS", 300) // 5 minutes
+	consecutiveErrorThreshold := getEnvAsInt("CONSECUTIVE_ERROR_THRESHOLD", 3)
+	maxBackoffFactor := getEnvAsInt("MAX_BACKOFF_FACTOR", 4)
+
+	// Cache cleanup configurations
+	cacheCleanupEnabled := getEnvAsBool("CACHE_CLEANUP_ENABLED", true)
+	cacheCleanupInterval := getEnvAsInt("CACHE_CLEANUP_INTERVAL_HOURS", 24)
+	cacheRetentionDays := getEnvAsInt("CACHE_RETENTION_DAYS", 7)
+
+	// Health server configuration
+	healthServerAddr := getEnv("HEALTH_SERVER_ADDR", ":8080")
+
 	cfg := &Config{
-		OctopusAPIKey:        strings.TrimSpace(getEnv("OCTOPUS_API_KEY", "")),
-		OctopusAccountNumber: strings.TrimSpace(getEnv("OCTOPUS_ACCOUNT_NUMBER", "")),
-		InfluxDBURL:          strings.TrimSpace(getEnv("INFLUXDB_URL", "http://localhost:8086")),
-		InfluxDBToken:        strings.TrimSpace(getEnv("INFLUXDB_TOKEN", "")),
-		InfluxDBOrg:          strings.TrimSpace(getEnv("INFLUXDB_ORG", "")),
-		InfluxDBBucket:       strings.TrimSpace(getEnv("INFLUXDB_BUCKET", "octopus_energy")),
-		SlackWebhookURL:      strings.TrimSpace(slackWebhookURL),
-		SlackEnabled:         slackEnabled,
-		PollInterval:         time.Duration(pollIntervalSec) * time.Second,
-		CacheDir:             cacheDir,
-		LogLevel:             logLevel,
+		OctopusAPIKey:             strings.TrimSpace(getEnv("OCTOPUS_API_KEY", "")),
+		OctopusAccountNumber:      strings.TrimSpace(getEnv("OCTOPUS_ACCOUNT_NUMBER", "")),
+		InfluxDBURL:               strings.TrimSpace(getEnv("INFLUXDB_URL", "http://localhost:8086")),
+		InfluxDBToken:             strings.TrimSpace(getEnv("INFLUXDB_TOKEN", "")),
+		InfluxDBOrg:               strings.TrimSpace(getEnv("INFLUXDB_ORG", "")),
+		InfluxDBBucket:            strings.TrimSpace(getEnv("INFLUXDB_BUCKET", "octopus_energy")),
+		InfluxDBMeasurement:       strings.TrimSpace(getEnv("INFLUXDB_MEASUREMENT", "energy_consumption")),
+		SlackWebhookURL:           strings.TrimSpace(slackWebhookURL),
+		SlackEnabled:              slackEnabled,
+		PollInterval:              time.Duration(pollIntervalSec) * time.Second,
+		CacheDir:                  cacheDir,
+		LogLevel:                  logLevel,
+		InfluxConnectTimeout:      time.Duration(influxConnectTimeout) * time.Second,
+		InfluxWriteTimeout:        time.Duration(influxWriteTimeout) * time.Second,
+		PollTimeout:               time.Duration(pollTimeout) * time.Second,
+		ShutdownTimeout:           time.Duration(shutdownTimeout) * time.Second,
+		CacheSyncTimeout:          time.Duration(cacheSyncTimeout) * time.Second,
+		ReconnectMaxElapsedTime:   time.Duration(reconnectMaxElapsed) * time.Second,
+		ConsecutiveErrorThreshold: consecutiveErrorThreshold,
+		MaxBackoffFactor:          maxBackoffFactor,
+		CacheCleanupEnabled:       cacheCleanupEnabled,
+		CacheCleanupInterval:      time.Duration(cacheCleanupInterval) * time.Hour,
+		CacheRetentionDays:        cacheRetentionDays,
+		HealthServerAddr:          healthServerAddr,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -130,6 +180,12 @@ func (c *Config) Validate() error {
 	if !validNameRegex.MatchString(c.InfluxDBBucket) {
 		return fmt.Errorf("INFLUXDB_BUCKET must contain only alphanumeric characters, underscores, and hyphens")
 	}
+	if c.InfluxDBMeasurement == "" {
+		return fmt.Errorf("INFLUXDB_MEASUREMENT is required")
+	}
+	if !validNameRegex.MatchString(c.InfluxDBMeasurement) {
+		return fmt.Errorf("INFLUXDB_MEASUREMENT must contain only alphanumeric characters, underscores, and hyphens")
+	}
 
 	// Validate Slack webhook URL if enabled
 	if c.SlackEnabled {
@@ -165,6 +221,35 @@ func (c *Config) Validate() error {
 	// Validate log level
 	if !validLogLevel[c.LogLevel] {
 		return fmt.Errorf("LOG_LEVEL must be one of: debug, info, warn, error")
+	}
+
+	// Validate timeout configurations
+	if c.InfluxConnectTimeout < 1*time.Second {
+		return fmt.Errorf("INFLUX_CONNECT_TIMEOUT_SECONDS must be at least 1 second")
+	}
+	if c.InfluxWriteTimeout < 1*time.Second {
+		return fmt.Errorf("INFLUX_WRITE_TIMEOUT_SECONDS must be at least 1 second")
+	}
+	if c.PollTimeout < 1*time.Second {
+		return fmt.Errorf("POLL_TIMEOUT_SECONDS must be at least 1 second")
+	}
+	if c.ShutdownTimeout < 1*time.Second {
+		return fmt.Errorf("SHUTDOWN_TIMEOUT_SECONDS must be at least 1 second")
+	}
+	if c.CacheSyncTimeout < 1*time.Second {
+		return fmt.Errorf("CACHE_SYNC_TIMEOUT_SECONDS must be at least 1 second")
+	}
+	if c.ReconnectMaxElapsedTime < 10*time.Second {
+		return fmt.Errorf("RECONNECT_MAX_ELAPSED_SECONDS must be at least 10 seconds")
+	}
+	if c.ConsecutiveErrorThreshold < 1 {
+		return fmt.Errorf("CONSECUTIVE_ERROR_THRESHOLD must be at least 1")
+	}
+	if c.MaxBackoffFactor < 1 {
+		return fmt.Errorf("MAX_BACKOFF_FACTOR must be at least 1")
+	}
+	if c.CacheRetentionDays < 1 {
+		return fmt.Errorf("CACHE_RETENTION_DAYS must be at least 1")
 	}
 
 	return nil

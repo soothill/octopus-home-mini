@@ -6,12 +6,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/soothill/octopus-home-mini/pkg/cache"
 	"github.com/soothill/octopus-home-mini/pkg/config"
+	"github.com/soothill/octopus-home-mini/pkg/health"
 	"github.com/soothill/octopus-home-mini/pkg/influx"
 	"github.com/soothill/octopus-home-mini/pkg/octopus"
 	"github.com/soothill/octopus-home-mini/pkg/slack"
@@ -68,7 +70,7 @@ func main() {
 	ctx := context.Background()
 	if err := cfg.ValidateRuntime(ctx); err != nil {
 		// Log warning but don't fail startup if it's just InfluxDB connectivity
-		if contains(err.Error(), "warning") {
+		if strings.Contains(err.Error(), "warning") {
 			log.Printf("Warning: %v", err)
 		} else {
 			log.Fatalf("Runtime validation failed: %v", err)
@@ -114,7 +116,7 @@ func main() {
 	// Initialize InfluxDB client with error handler and exponential backoff
 	var influxClient *influx.Client
 	expBackoff := backoff.NewExponentialBackOff()
-	expBackoff.MaxElapsedTime = 30 * time.Second
+	expBackoff.MaxElapsedTime = cfg.InfluxConnectTimeout
 	expBackoff.InitialInterval = 1 * time.Second
 	expBackoff.MaxInterval = 5 * time.Second
 	expBackoff.Multiplier = 2.0
@@ -126,6 +128,7 @@ func main() {
 			cfg.InfluxDBToken,
 			cfg.InfluxDBOrg,
 			cfg.InfluxDBBucket,
+			cfg.InfluxDBMeasurement,
 			influxErrorHandler,
 		)
 		return err
@@ -156,6 +159,37 @@ func main() {
 		backoffFactor: 1,
 	}
 
+	// Initialize and start health check server
+	healthServer := health.NewServer(cfg.HealthServerAddr, "1.0.0")
+
+	// Register health checkers
+	if influxClient != nil {
+		healthServer.RegisterChecker("influxdb", health.ContextChecker("InfluxDB", func(ctx context.Context) error {
+			return influxClient.CheckConnection(ctx)
+		}))
+	}
+
+	healthServer.RegisterChecker("octopus_api", health.SimpleChecker("Octopus API", func() error {
+		// Simple check - if the client is initialized, it's considered healthy
+		// More sophisticated checks could be added here
+		if octopusClient == nil {
+			return fmt.Errorf("octopus client not initialized")
+		}
+		return nil
+	}))
+
+	healthServer.RegisterChecker("cache", health.SimpleChecker("Cache", func() error {
+		// Check if cache is accessible
+		if cacheStore == nil {
+			return fmt.Errorf("cache not initialized")
+		}
+		return nil
+	}))
+
+	if err := healthServer.Start(); err != nil {
+		log.Printf("Warning: Failed to start health server: %v", err)
+	}
+
 	// Send startup notification
 	if slackNotifier != nil {
 		//nolint:errcheck // Slack notification errors should not stop the monitor
@@ -174,6 +208,12 @@ func main() {
 	// Start monitoring loop in a goroutine
 	stopChan := make(chan struct{})
 	go monitor.run(stopChan)
+
+	// Start cache cleanup goroutine if enabled
+	if cfg.CacheCleanupEnabled {
+		go monitor.runCacheCleanup(stopChan)
+		log.Printf("Cache cleanup enabled: running every %v (retention: %d days)", cfg.CacheCleanupInterval, cfg.CacheRetentionDays)
+	}
 
 	// Wait for shutdown signal
 	<-sigChan
@@ -197,7 +237,7 @@ func main() {
 	select {
 	case <-shutdownComplete:
 		log.Println("Monitoring loop stopped gracefully")
-	case <-time.After(5 * time.Second):
+	case <-time.After(cfg.ShutdownTimeout):
 		log.Println("Warning: monitoring loop did not stop within timeout")
 	}
 
@@ -216,6 +256,13 @@ func main() {
 
 	// Give Slack notification time to send
 	time.Sleep(500 * time.Millisecond)
+
+	// Stop health check server
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := healthServer.Stop(shutdownCtx); err != nil {
+		log.Printf("Error stopping health server: %v", err)
+	}
 
 	// Cleanup resources
 	if slackNotifier != nil {
@@ -250,7 +297,7 @@ func (m *Monitor) run(stopChan chan struct{}) {
 
 // poll fetches and processes new energy data
 func (m *Monitor) poll() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), m.cfg.PollTimeout)
 	defer cancel()
 
 	// Calculate time range for query
@@ -266,16 +313,16 @@ func (m *Monitor) poll() {
 		m.consecutiveErr++
 		log.Printf("Error fetching telemetry: %v", err)
 
-		// Enter degraded mode after 3 consecutive errors
-		if m.consecutiveErr >= 3 {
+		// Enter degraded mode after consecutive error threshold
+		if m.consecutiveErr >= m.cfg.ConsecutiveErrorThreshold {
 			if !m.degradedMode {
 				m.degradedMode = true
 				m.backoffFactor = 2 // Double the poll interval
 				m.sendSlackError("Octopus API", fmt.Sprintf("Entering degraded mode after %d consecutive errors: %v", m.consecutiveErr, err))
 				log.Printf("Entering degraded mode - polling interval increased to %v", m.cfg.PollInterval*time.Duration(m.backoffFactor))
 			} else {
-				// Already in degraded mode, increase backoff up to maximum of 4x
-				if m.backoffFactor < 4 {
+				// Already in degraded mode, increase backoff up to maximum configured factor
+				if m.backoffFactor < m.cfg.MaxBackoffFactor {
 					m.backoffFactor++
 					log.Printf("Increasing backoff factor to %dx (poll interval: %v)", m.backoffFactor, m.cfg.PollInterval*time.Duration(m.backoffFactor))
 				}
@@ -329,7 +376,7 @@ func (m *Monitor) poll() {
 
 // writeToInflux writes telemetry data to InfluxDB
 func (m *Monitor) writeToInflux(telemetryData []octopus.TelemetryData) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), m.cfg.InfluxWriteTimeout)
 	defer cancel()
 
 	for _, data := range telemetryData {
@@ -401,7 +448,7 @@ func (m *Monitor) tryReconnectInflux(ctx context.Context) {
 
 	// Configure exponential backoff
 	expBackoff := backoff.NewExponentialBackOff()
-	expBackoff.MaxElapsedTime = 5 * time.Minute
+	expBackoff.MaxElapsedTime = m.cfg.ReconnectMaxElapsedTime
 	expBackoff.InitialInterval = 1 * time.Second
 	expBackoff.MaxInterval = 30 * time.Second
 	expBackoff.Multiplier = 2.0
@@ -428,7 +475,7 @@ func (m *Monitor) syncCache() {
 
 	log.Printf("Syncing %d cached data points to InfluxDB...", len(cachedData))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), m.cfg.CacheSyncTimeout)
 	defer cancel()
 
 	successCount := 0
@@ -461,12 +508,35 @@ func (m *Monitor) syncCache() {
 	}
 }
 
-// contains checks if a string contains a substring
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+// runCacheCleanup periodically cleans up old cache files
+func (m *Monitor) runCacheCleanup(stopChan chan struct{}) {
+	// Run cleanup immediately on startup
+	m.cleanupCache()
+
+	// Setup periodic cleanup
+	ticker := time.NewTicker(m.cfg.CacheCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			m.cleanupCache()
+		case <-stopChan:
+			return
 		}
 	}
-	return false
+}
+
+// cleanupCache removes cache files older than the retention period
+func (m *Monitor) cleanupCache() {
+	log.Printf("Running cache cleanup (retention: %d days)...", m.cfg.CacheRetentionDays)
+
+	retentionDuration := time.Duration(m.cfg.CacheRetentionDays) * 24 * time.Hour
+	err := m.cache.CleanupOldFiles(retentionDuration)
+	if err != nil {
+		log.Printf("Error during cache cleanup: %v", err)
+		m.sendSlackWarning("Cache Cleanup", fmt.Sprintf("Failed to cleanup old cache files: %v", err))
+	} else {
+		log.Printf("Cache cleanup completed successfully")
+	}
 }

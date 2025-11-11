@@ -96,7 +96,7 @@ func TestNewClient_InvalidURL(t *testing.T) {
 			defer cancel()
 
 			// Create client with invalid URL
-			_, err := NewClient(tt.url, tt.token, tt.org, tt.bucket)
+			_, err := NewClient(tt.url, tt.token, tt.org, tt.bucket, "energy_consumption")
 
 			// We expect connection to fail
 			if err == nil {

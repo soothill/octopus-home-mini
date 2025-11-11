@@ -19,7 +19,7 @@ func TestInfluxDBIntegration(t *testing.T) {
 	defer CleanupInfluxDB(t, cfg)
 
 	// Create InfluxDB client
-	influxClient, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket)
+	influxClient, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket, cfg.InfluxDBMeasurement)
 	if err != nil {
 		t.Fatalf("Failed to create InfluxDB client: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestInfluxDBBlockingWrites(t *testing.T) {
 	SkipIfNoInfluxDB(t, cfg)
 	defer CleanupInfluxDB(t, cfg)
 
-	influxClient, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket)
+	influxClient, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket, cfg.InfluxDBMeasurement)
 	if err != nil {
 		t.Fatalf("Failed to create InfluxDB client: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestInfluxDBHealthCheck(t *testing.T) {
 	cfg := NewTestConfig(t)
 	SkipIfNoInfluxDB(t, cfg)
 
-	influxClient, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket)
+	influxClient, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket, cfg.InfluxDBMeasurement)
 	if err != nil {
 		t.Fatalf("Failed to create InfluxDB client: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestInfluxDBBatchWrites(t *testing.T) {
 	SkipIfNoInfluxDB(t, cfg)
 	defer CleanupInfluxDB(t, cfg)
 
-	influxClient, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket)
+	influxClient, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket, cfg.InfluxDBMeasurement)
 	if err != nil {
 		t.Fatalf("Failed to create InfluxDB client: %v", err)
 	}
