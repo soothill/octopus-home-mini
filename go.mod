@@ -1,4 +1,4 @@
-module github.com/darren/octopus-home-mini
+module github.com/soothill/octopus-home-mini
 
 go 1.22
 

@@ -9,11 +9,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/darren/octopus-home-mini/pkg/cache"
-	"github.com/darren/octopus-home-mini/pkg/config"
-	"github.com/darren/octopus-home-mini/pkg/influx"
-	"github.com/darren/octopus-home-mini/pkg/octopus"
-	"github.com/darren/octopus-home-mini/pkg/slack"
+	"github.com/soothill/octopus-home-mini/pkg/cache"
+	"github.com/soothill/octopus-home-mini/pkg/config"
+	"github.com/soothill/octopus-home-mini/pkg/influx"
+	"github.com/soothill/octopus-home-mini/pkg/octopus"
+	"github.com/soothill/octopus-home-mini/pkg/slack"
 )
 
 // Monitor handles the main monitoring loop
