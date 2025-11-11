@@ -1,0 +1,310 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/darren/octopus-home-mini/pkg/cache"
+	"github.com/darren/octopus-home-mini/pkg/config"
+	"github.com/darren/octopus-home-mini/pkg/influx"
+	"github.com/darren/octopus-home-mini/pkg/octopus"
+	"github.com/darren/octopus-home-mini/pkg/slack"
+)
+
+// Monitor handles the main monitoring loop
+type Monitor struct {
+	cfg            *config.Config
+	octopusClient  *octopus.Client
+	influxClient   *influx.Client
+	cache          *cache.Cache
+	slackNotifier  *slack.Notifier
+	lastPollTime   time.Time
+	influxHealthy  bool
+	consecutiveErr int
+}
+
+func main() {
+	log.Println("Starting Octopus Home Mini Monitor...")
+
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Initialize cache
+	cacheStore, err := cache.NewCache(cfg.CacheDir)
+	if err != nil {
+		log.Fatalf("Failed to initialize cache: %v", err)
+	}
+
+	// Initialize Slack notifier
+	slackNotifier := slack.NewNotifier(cfg.SlackWebhookURL)
+
+	// Initialize Octopus client
+	octopusClient := octopus.NewClient(cfg.OctopusAPIKey, cfg.OctopusAccountNumber)
+
+	// Initialize Octopus client (authenticate and get meter GUID)
+	ctx := context.Background()
+	if err := octopusClient.Initialize(ctx); err != nil {
+		log.Fatalf("Failed to initialize Octopus client: %v", err)
+		slackNotifier.SendError("Initialization", fmt.Sprintf("Failed to initialize Octopus client: %v", err))
+	}
+
+	log.Println("Octopus client initialized successfully")
+
+	// Initialize InfluxDB client
+	influxClient, err := influx.NewClient(cfg.InfluxDBURL, cfg.InfluxDBToken, cfg.InfluxDBOrg, cfg.InfluxDBBucket)
+	if err != nil {
+		log.Printf("Warning: Failed to connect to InfluxDB: %v. Will cache data locally.", err)
+		slackNotifier.SendWarning("InfluxDB", fmt.Sprintf("Failed to connect to InfluxDB: %v. Caching data locally.", err))
+	} else {
+		log.Println("InfluxDB client initialized successfully")
+		defer influxClient.Close()
+	}
+
+	// Create monitor
+	monitor := &Monitor{
+		cfg:           cfg,
+		octopusClient: octopusClient,
+		influxClient:  influxClient,
+		cache:         cacheStore,
+		slackNotifier: slackNotifier,
+		lastPollTime:  time.Now().Add(-cfg.PollInterval),
+		influxHealthy: influxClient != nil,
+	}
+
+	// Send startup notification
+	slackNotifier.SendInfo("Monitor Started", "Octopus Home Mini monitor has started successfully")
+
+	// Try to sync any cached data on startup
+	if monitor.influxHealthy {
+		monitor.syncCache()
+	}
+
+	// Setup graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Start monitoring loop in a goroutine
+	stopChan := make(chan struct{})
+	go monitor.run(stopChan)
+
+	// Wait for shutdown signal
+	<-sigChan
+	log.Println("Shutdown signal received, stopping monitor...")
+	close(stopChan)
+
+	// Send shutdown notification
+	if monitor.cache.Count() > 0 {
+		slackNotifier.SendWarning("Monitor Stopped", fmt.Sprintf("Monitor stopped with %d data points in cache", monitor.cache.Count()))
+	} else {
+		slackNotifier.SendInfo("Monitor Stopped", "Monitor stopped gracefully")
+	}
+
+	log.Println("Monitor stopped")
+}
+
+// run executes the main monitoring loop
+func (m *Monitor) run(stopChan chan struct{}) {
+	ticker := time.NewTicker(m.cfg.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			m.poll()
+		case <-stopChan:
+			return
+		}
+	}
+}
+
+// poll fetches and processes new energy data
+func (m *Monitor) poll() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Calculate time range for query
+	now := time.Now()
+	start := m.lastPollTime
+	end := now
+
+	log.Printf("Polling data from %s to %s", start.Format(time.RFC3339), end.Format(time.RFC3339))
+
+	// Fetch telemetry data
+	telemetryData, err := m.octopusClient.GetTelemetry(ctx, start, end)
+	if err != nil {
+		m.consecutiveErr++
+		log.Printf("Error fetching telemetry: %v", err)
+
+		// Alert if consecutive errors reach threshold
+		if m.consecutiveErr >= 3 {
+			m.slackNotifier.SendError("Octopus API", fmt.Sprintf("Failed to fetch telemetry data (consecutive errors: %d): %v", m.consecutiveErr, err))
+			m.consecutiveErr = 0 // Reset after alerting
+		}
+		return
+	}
+
+	m.consecutiveErr = 0
+	m.lastPollTime = end
+
+	if len(telemetryData) == 0 {
+		log.Println("No new telemetry data available")
+		return
+	}
+
+	log.Printf("Retrieved %d data points", len(telemetryData))
+
+	// Check InfluxDB health
+	m.checkInfluxHealth(ctx)
+
+	// Process data
+	if m.influxHealthy {
+		// Try to write to InfluxDB
+		if err := m.writeToInflux(telemetryData); err != nil {
+			log.Printf("Failed to write to InfluxDB: %v", err)
+			m.influxHealthy = false
+			m.slackNotifier.SendError("InfluxDB", fmt.Sprintf("Failed to write data: %v. Switching to cache mode.", err))
+
+			// Cache the data instead
+			m.cacheData(telemetryData)
+		} else {
+			log.Printf("Successfully wrote %d data points to InfluxDB", len(telemetryData))
+		}
+	} else {
+		// InfluxDB is down, cache the data
+		m.cacheData(telemetryData)
+
+		// Periodically try to reconnect
+		m.tryReconnectInflux(ctx)
+	}
+}
+
+// writeToInflux writes telemetry data to InfluxDB
+func (m *Monitor) writeToInflux(telemetryData []octopus.TelemetryData) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for _, data := range telemetryData {
+		dp := influx.DataPoint{
+			Timestamp:        data.ReadAt,
+			ConsumptionDelta: data.ConsumptionDelta,
+			Demand:           data.Demand,
+			CostDelta:        data.CostDelta,
+			Consumption:      data.Consumption,
+		}
+
+		if err := m.influxClient.WritePointDirectly(ctx, dp); err != nil {
+			return err
+		}
+	}
+
+	m.influxClient.Flush()
+	return nil
+}
+
+// cacheData stores telemetry data in local cache
+func (m *Monitor) cacheData(telemetryData []octopus.TelemetryData) {
+	dataPoints := make([]cache.DataPoint, 0, len(telemetryData))
+
+	for _, data := range telemetryData {
+		dataPoints = append(dataPoints, cache.DataPoint{
+			Timestamp:        data.ReadAt,
+			ConsumptionDelta: data.ConsumptionDelta,
+			Demand:           data.Demand,
+			CostDelta:        data.CostDelta,
+			Consumption:      data.Consumption,
+		})
+	}
+
+	if err := m.cache.Add(dataPoints); err != nil {
+		log.Printf("Error caching data: %v", err)
+		m.slackNotifier.SendError("Cache", fmt.Sprintf("Failed to cache data: %v", err))
+	} else {
+		log.Printf("Cached %d data points (total in cache: %d)", len(dataPoints), m.cache.Count())
+	}
+}
+
+// checkInfluxHealth checks if InfluxDB is healthy
+func (m *Monitor) checkInfluxHealth(ctx context.Context) {
+	if m.influxClient == nil {
+		return
+	}
+
+	err := m.influxClient.CheckConnection(ctx)
+	wasHealthy := m.influxHealthy
+	m.influxHealthy = err == nil
+
+	// Alert on state change
+	if wasHealthy && !m.influxHealthy {
+		log.Println("InfluxDB connection lost")
+		m.slackNotifier.SendError("InfluxDB", "Connection to InfluxDB lost. Switching to cache mode.")
+	} else if !wasHealthy && m.influxHealthy {
+		log.Println("InfluxDB connection restored")
+		m.slackNotifier.SendInfo("InfluxDB", "Connection to InfluxDB restored. Syncing cached data...")
+		m.syncCache()
+	}
+}
+
+// tryReconnectInflux attempts to reconnect to InfluxDB
+func (m *Monitor) tryReconnectInflux(ctx context.Context) {
+	if m.influxClient == nil {
+		return
+	}
+
+	if err := m.influxClient.CheckConnection(ctx); err == nil {
+		log.Println("InfluxDB connection restored!")
+		m.influxHealthy = true
+		m.slackNotifier.SendInfo("InfluxDB", "Connection restored. Syncing cached data...")
+		m.syncCache()
+	}
+}
+
+// syncCache writes all cached data to InfluxDB
+func (m *Monitor) syncCache() {
+	cachedData := m.cache.GetAll()
+	if len(cachedData) == 0 {
+		log.Println("No cached data to sync")
+		return
+	}
+
+	log.Printf("Syncing %d cached data points to InfluxDB...", len(cachedData))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	successCount := 0
+	for _, data := range cachedData {
+		dp := influx.DataPoint{
+			Timestamp:        data.Timestamp,
+			ConsumptionDelta: data.ConsumptionDelta,
+			Demand:           data.Demand,
+			CostDelta:        data.CostDelta,
+			Consumption:      data.Consumption,
+		}
+
+		if err := m.influxClient.WritePointDirectly(ctx, dp); err != nil {
+			log.Printf("Error writing cached point: %v", err)
+			m.slackNotifier.SendError("Cache Sync", fmt.Sprintf("Failed to sync cached data: %v", err))
+			return
+		}
+		successCount++
+	}
+
+	m.influxClient.Flush()
+
+	// Clear cache after successful sync
+	if err := m.cache.Clear(); err != nil {
+		log.Printf("Error clearing cache: %v", err)
+		m.slackNotifier.SendError("Cache", fmt.Sprintf("Failed to clear cache: %v", err))
+	} else {
+		log.Printf("Successfully synced %d cached data points", successCount)
+		m.slackNotifier.SendInfo("Cache Sync", fmt.Sprintf("Successfully synced %d cached data points to InfluxDB", successCount))
+	}
+}
