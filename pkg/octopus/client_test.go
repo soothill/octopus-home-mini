@@ -13,7 +13,7 @@ func TestNewClient(t *testing.T) {
 	client := NewClient(apiKey, accountNumber)
 
 	if client == nil {
-		t.Error("NewClient() returned nil")
+		t.Fatal("NewClient() returned nil")
 	}
 
 	if client.apiKey != apiKey {

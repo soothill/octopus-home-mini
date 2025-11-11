@@ -12,7 +12,7 @@ import (
 // Config holds all application configuration
 type Config struct {
 	// Octopus Energy API
-	OctopusAPIKey       string
+	OctopusAPIKey        string
 	OctopusAccountNumber string
 
 	// InfluxDB
@@ -38,16 +38,16 @@ func Load() (*Config, error) {
 	pollIntervalSec := getEnvAsInt("POLL_INTERVAL_SECONDS", 30)
 
 	cfg := &Config{
-		OctopusAPIKey:       getEnv("OCTOPUS_API_KEY", ""),
+		OctopusAPIKey:        getEnv("OCTOPUS_API_KEY", ""),
 		OctopusAccountNumber: getEnv("OCTOPUS_ACCOUNT_NUMBER", ""),
-		InfluxDBURL:         getEnv("INFLUXDB_URL", "http://localhost:8086"),
-		InfluxDBToken:       getEnv("INFLUXDB_TOKEN", ""),
-		InfluxDBOrg:         getEnv("INFLUXDB_ORG", ""),
-		InfluxDBBucket:      getEnv("INFLUXDB_BUCKET", "octopus_energy"),
-		SlackWebhookURL:     getEnv("SLACK_WEBHOOK_URL", ""),
-		PollInterval:        time.Duration(pollIntervalSec) * time.Second,
-		CacheDir:            getEnv("CACHE_DIR", "./cache"),
-		LogLevel:            getEnv("LOG_LEVEL", "info"),
+		InfluxDBURL:          getEnv("INFLUXDB_URL", "http://localhost:8086"),
+		InfluxDBToken:        getEnv("INFLUXDB_TOKEN", ""),
+		InfluxDBOrg:          getEnv("INFLUXDB_ORG", ""),
+		InfluxDBBucket:       getEnv("INFLUXDB_BUCKET", "octopus_energy"),
+		SlackWebhookURL:      getEnv("SLACK_WEBHOOK_URL", ""),
+		PollInterval:         time.Duration(pollIntervalSec) * time.Second,
+		CacheDir:             getEnv("CACHE_DIR", "./cache"),
+		LogLevel:             getEnv("LOG_LEVEL", "info"),
 	}
 
 	if err := cfg.Validate(); err != nil {

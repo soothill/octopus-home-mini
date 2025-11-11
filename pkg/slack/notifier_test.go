@@ -12,7 +12,7 @@ func TestNewNotifier(t *testing.T) {
 	notifier := NewNotifier(webhookURL)
 
 	if notifier == nil {
-		t.Error("NewNotifier() returned nil")
+		t.Fatal("NewNotifier() returned nil")
 	}
 
 	if notifier.webhookURL != webhookURL {
@@ -26,13 +26,13 @@ func TestNewNotifier(t *testing.T) {
 
 func TestNotifier_SendError(t *testing.T) {
 	tests := []struct {
-		name          string
-		component     string
-		errorMsg      string
-		serverStatus  int
-		serverBody    string
-		wantErr       bool
-		wantContains  []string
+		name         string
+		component    string
+		errorMsg     string
+		serverStatus int
+		serverBody   string
+		wantErr      bool
+		wantContains []string
 	}{
 		{
 			name:         "successful error notification",
