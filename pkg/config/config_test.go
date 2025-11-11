@@ -401,11 +401,11 @@ func TestValidateInfluxDBConnectivity(t *testing.T) {
 
 func TestValidateRuntime(t *testing.T) {
 	tests := []struct {
-		name       string
-		setup      func(t *testing.T) (*Config, *httptest.Server)
-		wantErr    bool
-		errMsg     string
-		isWarning  bool // If true, error is a warning, not fatal
+		name      string
+		setup     func(t *testing.T) (*Config, *httptest.Server)
+		wantErr   bool
+		errMsg    string
+		isWarning bool // If true, error is a warning, not fatal
 	}{
 		{
 			name: "valid runtime configuration",

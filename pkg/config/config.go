@@ -137,7 +137,10 @@ func (c *Config) Validate() error {
 			return err
 		}
 		// Ensure it's a hooks.slack.com URL (or example.com for testing)
-		parsedURL, _ := url.Parse(c.SlackWebhookURL)
+		parsedURL, err := url.Parse(c.SlackWebhookURL)
+		if err != nil {
+			return fmt.Errorf("SLACK_WEBHOOK_URL is not a valid URL: %w", err)
+		}
 		if parsedURL.Host != "hooks.slack.com" && parsedURL.Host != "example.com" {
 			return fmt.Errorf("SLACK_WEBHOOK_URL must be a hooks.slack.com URL")
 		}

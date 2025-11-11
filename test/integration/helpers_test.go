@@ -22,12 +22,12 @@ func NewTestConfig(t *testing.T) *config.Config {
 		OctopusAPIKey:        "test_api_key",
 		OctopusAccountNumber: "A-12345678",
 		InfluxDBURL:          getEnvOrDefault("INFLUXDB_URL", "http://localhost:8086"),
-		InfluxDBToken:     getEnvOrDefault("INFLUXDB_TOKEN", "test-token-12345678901234567890"),
-		InfluxDBOrg:       getEnvOrDefault("INFLUXDB_ORG", "test-org"),
-		InfluxDBBucket:    getEnvOrDefault("INFLUXDB_BUCKET", "test-bucket"),
-		PollInterval:      10 * time.Second,
-		CacheDir:          t.TempDir(),
-		LogLevel:          "info",
+		InfluxDBToken:        getEnvOrDefault("INFLUXDB_TOKEN", "test-token-12345678901234567890"),
+		InfluxDBOrg:          getEnvOrDefault("INFLUXDB_ORG", "test-org"),
+		InfluxDBBucket:       getEnvOrDefault("INFLUXDB_BUCKET", "test-bucket"),
+		PollInterval:         10 * time.Second,
+		CacheDir:             t.TempDir(),
+		LogLevel:             "info",
 	}
 }
 

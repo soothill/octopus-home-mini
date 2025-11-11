@@ -177,7 +177,11 @@ func (c *Client) GetTelemetry(ctx context.Context, start, end time.Time) ([]Tele
 		return nil, err
 	}
 
-	return result.([]TelemetryData), nil
+	data, ok := result.([]TelemetryData)
+	if !ok {
+		return nil, fmt.Errorf("unexpected result type from circuit breaker")
+	}
+	return data, nil
 }
 
 // fetchTelemetryWithRetry performs the actual telemetry fetch with retry logic

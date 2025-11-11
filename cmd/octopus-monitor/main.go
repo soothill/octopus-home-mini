@@ -145,15 +145,15 @@ func main() {
 
 	// Create monitor
 	monitor := &Monitor{
-		cfg:            cfg,
-		octopusClient:  octopusClient,
-		influxClient:   influxClient,
-		cache:          cacheStore,
-		slackNotifier:  slackNotifier,
-		lastPollTime:   time.Now().Add(-cfg.PollInterval),
-		influxHealthy:  influxClient != nil,
-		degradedMode:   false,
-		backoffFactor:  1,
+		cfg:           cfg,
+		octopusClient: octopusClient,
+		influxClient:  influxClient,
+		cache:         cacheStore,
+		slackNotifier: slackNotifier,
+		lastPollTime:  time.Now().Add(-cfg.PollInterval),
+		influxHealthy: influxClient != nil,
+		degradedMode:  false,
+		backoffFactor: 1,
 	}
 
 	// Send startup notification

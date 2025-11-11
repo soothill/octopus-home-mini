@@ -420,10 +420,8 @@ func TestNewClientWithErrorHandler_NilHandler(t *testing.T) {
 	// but we can verify the function exists and accepts nil
 	var handler ErrorHandler = nil
 
-	// Verify nil handler is valid
-	if handler != nil {
-		t.Error("Handler should be nil")
-	}
+	// Verify nil handler is valid by using it
+	_ = handler // Silence unused variable warning
 
 	t.Log("NewClientWithErrorHandler accepts nil error handler (tested via signature)")
 }

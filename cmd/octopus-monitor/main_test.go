@@ -118,9 +118,9 @@ func TestMonitor_CheckInfluxHealth(t *testing.T) {
 
 	t.Run("nil influx client", func(t *testing.T) {
 		m := &Monitor{
-			cfg:          cfg,
-			cache:        cacheStore,
-			influxClient: nil,
+			cfg:           cfg,
+			cache:         cacheStore,
+			influxClient:  nil,
 			influxHealthy: false,
 		}
 

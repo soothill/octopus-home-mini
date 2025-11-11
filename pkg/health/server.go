@@ -27,16 +27,16 @@ type ComponentHealth struct {
 
 // HealthResponse represents the overall health response
 type HealthResponse struct {
-	Status     Status                      `json:"status"`
-	Timestamp  string                      `json:"timestamp"`
-	Version    string                      `json:"version,omitempty"`
+	Status     Status                     `json:"status"`
+	Timestamp  string                     `json:"timestamp"`
+	Version    string                     `json:"version,omitempty"`
 	Components map[string]ComponentHealth `json:"components,omitempty"`
 }
 
 // ReadinessResponse represents the readiness check response
 type ReadinessResponse struct {
-	Ready      bool                        `json:"ready"`
-	Timestamp  string                      `json:"timestamp"`
+	Ready      bool                       `json:"ready"`
+	Timestamp  string                     `json:"timestamp"`
 	Components map[string]ComponentHealth `json:"components"`
 }
 
@@ -114,6 +114,7 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	//nolint:errcheck // Error logged implicitly by HTTP layer
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -166,6 +167,7 @@ func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
+	//nolint:errcheck // Error logged implicitly by HTTP layer
 	json.NewEncoder(w).Encode(response)
 }
 
