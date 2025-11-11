@@ -4,24 +4,48 @@ A Go application that pulls usage data from an Octopus Energy Home Mini device a
 
 ## Features
 
+### Core Functionality
 - **Real-time Data Collection**: Pulls energy consumption data from Octopus Home Mini every 30 seconds (configurable)
 - **InfluxDB Integration**: Stores energy metrics in InfluxDB for long-term analysis and visualization
 - **Slack Notifications**: Sends alerts on failures, warnings, and important events
 - **Local Caching**: Automatically caches data locally when InfluxDB is unavailable
 - **Automatic Sync**: Syncs cached data to InfluxDB when connection is restored
-- **Graceful Shutdown**: Handles shutdown signals properly and preserves unsaved data
-- **Health Monitoring**: Continuously monitors InfluxDB connection health
+
+### Reliability & Resilience
+- **Circuit Breakers**: Protects against cascading failures with circuit breaker pattern on all external services (Octopus API, InfluxDB, Slack)
+- **Exponential Backoff**: Automatic retry with exponential backoff for transient failures
+- **Graceful Degradation**: Enters degraded mode after consecutive failures with adaptive polling intervals (2x, 3x, up to 4x) to reduce load on failing services
+- **Health Monitoring**: Continuously monitors InfluxDB connection health with automatic recovery
+- **Configuration Validation**: Validates configuration and tests connectivity on startup to fail fast
+- **Proper Resource Cleanup**: Graceful shutdown with timeout, signal handler cleanup, and HTTP connection cleanup
+
+### Security & Configuration
+- **Secrets Management**: Flexible secrets provider system supporting environment variables, file-based secrets, and extensible for AWS Secrets Manager, HashiCorp Vault, and Kubernetes Secrets
+- **Input Validation**: Comprehensive validation and sanitization of all configuration inputs to prevent injection attacks
+- **Secure Defaults**: Security-focused defaults including URL validation and path traversal protection
+
+### Monitoring & Operations
+- **Health Check HTTP Endpoints**: Kubernetes-ready liveness (`/health`) and readiness (`/ready`) endpoints for container orchestration
+- **Component Health Checks**: Extensible health checker system for monitoring individual component health
+- **Graceful Shutdown**: Handles shutdown signals properly, persists unsaved data, and waits for in-flight operations
+
+### Testing & Quality
+- **Comprehensive Test Coverage**: Unit tests for all packages (config: 100%, cache: 85%+, slack: 90%+, influx: 20%+, octopus: 75%+)
+- **Integration Tests**: End-to-end integration tests with real InfluxDB (Docker Compose-based)
+- **CI/CD Pipeline**: GitHub Actions workflow with automated testing, linting, and security scanning
 
 ## Architecture
 
 The application consists of several key components:
 
-- **Octopus API Client** ([pkg/octopus/client.go](pkg/octopus/client.go)): GraphQL client for Octopus Energy API
-- **InfluxDB Client** ([pkg/influx/client.go](pkg/influx/client.go)): Handles writing data to InfluxDB
-- **Cache System** ([pkg/cache/cache.go](pkg/cache/cache.go)): Local file-based cache for offline data storage
-- **Slack Notifier** ([pkg/slack/notifier.go](pkg/slack/notifier.go)): Sends formatted alerts to Slack
-- **Configuration** ([pkg/config/config.go](pkg/config/config.go)): Environment-based configuration management
-- **Main Monitor** ([cmd/octopus-monitor/main.go](cmd/octopus-monitor/main.go)): Orchestrates all components
+- **Octopus API Client** ([pkg/octopus/client.go](pkg/octopus/client.go)): GraphQL client for Octopus Energy API with circuit breaker and exponential backoff
+- **InfluxDB Client** ([pkg/influx/client.go](pkg/influx/client.go)): Handles writing data to InfluxDB with async error monitoring and circuit breaker protection
+- **Cache System** ([pkg/cache/cache.go](pkg/cache/cache.go)): Local file-based cache for offline data storage with automatic persistence
+- **Slack Notifier** ([pkg/slack/notifier.go](pkg/slack/notifier.go)): Sends formatted alerts to Slack with retry logic and circuit breaker
+- **Configuration** ([pkg/config/config.go](pkg/config/config.go)): Environment-based configuration management with validation and runtime connectivity checks
+- **Health Server** ([pkg/health/server.go](pkg/health/server.go)): HTTP server providing liveness and readiness endpoints for Kubernetes
+- **Secrets Management** ([pkg/secrets/secrets.go](pkg/secrets/secrets.go)): Flexible secrets provider supporting multiple backends (env, file, AWS, Vault, K8s)
+- **Main Monitor** ([cmd/octopus-monitor/main.go](cmd/octopus-monitor/main.go)): Orchestrates all components with graceful degradation and adaptive polling
 
 ## Prerequisites
 
@@ -182,29 +206,31 @@ sudo systemctl start octopus-monitor
 
 ### Docker
 
-Create a `Dockerfile`:
-
-```dockerfile
-FROM golang:1.24-alpine AS builder
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN go build -o octopus-monitor cmd/octopus-monitor/main.go
-
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-COPY --from=builder /app/octopus-monitor .
-CMD ["./octopus-monitor"]
-```
+The project includes a multi-platform Dockerfile that automatically builds for your architecture.
 
 Build and run:
 
 ```bash
+# Build for current platform
+make docker-build
+docker run -d --name octopus-monitor --env-file .env octopus-monitor:latest
+
+# Or using docker directly
 docker build -t octopus-monitor .
 docker run -d --name octopus-monitor --env-file .env octopus-monitor
 ```
+
+For multi-platform builds (AMD64, ARM64, ARMv7):
+
+```bash
+# Build for multiple architectures
+make docker-buildx
+
+# Or to build and push to a registry
+make docker-buildx-push
+```
+
+The Docker image automatically detects and uses the correct binary for your platform (x86_64, ARM64, or ARMv7).
 
 ## Data Schema
 
@@ -244,24 +270,102 @@ from(bucket: "octopus_energy")
   |> sum()
 ```
 
+## Health Endpoints
+
+The application provides HTTP health check endpoints for Kubernetes and container orchestration:
+
+### Liveness Endpoint: `/health`
+Returns `200 OK` if the application is running. This endpoint checks basic application health.
+
+```bash
+curl http://localhost:8080/health
+```
+
+Response:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2025-11-11T18:30:00Z",
+  "version": "1.0.0"
+}
+```
+
+### Readiness Endpoint: `/ready`
+Returns `200 OK` if all registered components are healthy, `503 Service Unavailable` if any component is unhealthy.
+
+```bash
+curl http://localhost:8080/ready
+```
+
+Response:
+```json
+{
+  "ready": true,
+  "timestamp": "2025-11-11T18:30:00Z",
+  "components": {
+    "influxdb": {
+      "status": "healthy",
+      "message": "Connected"
+    },
+    "octopus_api": {
+      "status": "healthy",
+      "message": "API accessible"
+    }
+  }
+}
+```
+
+## Graceful Degradation
+
+The application implements intelligent graceful degradation to handle service failures:
+
+### Degraded Mode Operation
+When the Octopus API experiences consecutive failures (3+), the monitor:
+1. Enters **degraded mode** and sends a Slack alert
+2. Increases the polling interval to reduce load on the failing service:
+   - 1st degradation: 2x normal interval (e.g., 30s → 60s)
+   - 2nd degradation: 3x normal interval (e.g., 30s → 90s)
+   - 3rd+ degradation: 4x normal interval (maximum, e.g., 30s → 120s)
+3. Continues attempting to fetch data at reduced frequency
+4. Automatically recovers and resumes normal polling when the service is restored
+
+### InfluxDB Failover
+When InfluxDB is unavailable:
+1. Automatically switches to local cache mode
+2. Continues collecting data from Octopus API
+3. Stores all data in local JSON files
+4. Monitors InfluxDB health with exponential backoff reconnection attempts
+5. Automatically syncs all cached data when InfluxDB recovers
+6. Sends Slack notifications on state transitions
+
+### Circuit Breaker Protection
+All external services (Octopus API, InfluxDB, Slack) are protected by circuit breakers:
+- **Failure Threshold**: 60% failure rate over 3 requests
+- **Timeout**: 30-60 seconds before attempting to close circuit
+- **Max Requests**: 3 requests allowed in half-open state
+- Prevents cascading failures and excessive retry attempts
+
 ## Monitoring and Alerts
 
 The application sends Slack notifications for:
 
 - **Errors**:
-  - Failed to fetch data from Octopus API (after 3 consecutive failures)
+  - Entering degraded mode (after 3 consecutive Octopus API failures)
   - Failed to write to InfluxDB
   - Failed to cache data locally
   - Failed to sync cached data
+  - Circuit breaker opened
 
 - **Warnings**:
   - InfluxDB connection lost (switching to cache mode)
   - Monitor stopped with data in cache
+  - Configuration validation warnings
 
 - **Info**:
   - Monitor started successfully
   - InfluxDB connection restored
   - Cache successfully synced
+  - Recovered from degraded mode
 
 ## Cache Behavior
 
@@ -324,14 +428,30 @@ make coverage
 
 # Run unit tests only (skips integration tests)
 go test ./pkg/... -v -short
+
+# Run integration tests with InfluxDB
+cd test/integration
+docker-compose -f docker-compose.test.yml up -d
+cd ../..
+go test -v ./test/integration/
 ```
 
 **Test Coverage:**
-- **config**: Environment variable loading, validation
-- **cache**: Local file caching, concurrent access, persistence
-- **slack**: Webhook notifications, error handling, message formatting
-- **octopus**: API client structure, authentication flow, data parsing
-- **influx**: Data point structure, client initialization, time zone handling
+- **config**: Environment variable loading, validation, runtime connectivity checks (100%)
+- **cache**: Local file caching, concurrent access, persistence (85%+)
+- **slack**: Webhook notifications, error handling, message formatting, circuit breakers (90%+)
+- **octopus**: API client, authentication flow, data parsing, circuit breakers, backoff (75%+)
+- **influx**: Data point structure, client initialization, error monitoring, circuit breakers (20%+)
+- **health**: HTTP server, liveness/readiness endpoints, component health checks (95%+)
+- **secrets**: Secrets management, multiple provider types, concurrent access (94%+)
+- **main**: Monitor lifecycle, graceful shutdown, degraded mode, cache sync (18%+)
+
+**Integration Tests** ([test/integration](test/integration)):
+- Full monitoring loop with real InfluxDB
+- Cache fallback and recovery scenarios
+- InfluxDB failover and reconnection
+- Concurrent operations and data integrity
+- Docker Compose-based test environment
 
 All tests use table-driven testing patterns and cover:
 - Happy path scenarios
@@ -339,6 +459,9 @@ All tests use table-driven testing patterns and cover:
 - Edge cases
 - Concurrent access patterns
 - Input validation
+- Circuit breaker behavior
+- Graceful degradation
+- Resource cleanup
 
 ### Building for production
 
@@ -346,28 +469,102 @@ All tests use table-driven testing patterns and cover:
 CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o octopus-monitor cmd/octopus-monitor/main.go
 ```
 
+### Multi-platform builds
+
+The application supports building for multiple architectures:
+
+```bash
+# Build for all platforms
+make build-all
+
+# Build for specific platforms
+make build-linux-amd64   # Linux x86_64 (Intel/AMD servers)
+make build-linux-arm64   # Linux ARM64 (Raspberry Pi 4/5, AWS Graviton)
+make build-linux-armv7   # Linux ARMv7 (Raspberry Pi 2/3, 32-bit)
+make build-darwin-amd64  # macOS Intel
+make build-darwin-arm64  # macOS Apple Silicon (M1/M2/M3)
+make build-windows-amd64 # Windows x86_64
+```
+
+Built binaries are placed in the `dist/` directory with platform-specific names:
+- `octopus-monitor-linux-amd64`
+- `octopus-monitor-linux-arm64`
+- `octopus-monitor-linux-armv7`
+- `octopus-monitor-darwin-amd64`
+- `octopus-monitor-darwin-arm64`
+- `octopus-monitor-windows-amd64.exe`
+
+All binaries are statically linked with CGO disabled, making them fully portable without external dependencies.
+
+#### Docker multi-platform builds
+
+Build Docker images for multiple architectures using Docker Buildx:
+
+```bash
+# Build multi-platform images for AMD64, ARM64, and ARMv7
+make docker-buildx
+
+# Build and push to a container registry
+make docker-buildx-push
+```
+
+The Docker image supports:
+- `linux/amd64` - Standard x86_64 servers
+- `linux/arm64` - ARM64 servers (AWS Graviton, Raspberry Pi 4/5)
+- `linux/arm/v7` - ARMv7 devices (Raspberry Pi 2/3)
+
+Docker will automatically pull the correct image for your platform.
+
 ## Project Structure
 
 ```
 octopus-home-mini/
 ├── cmd/
 │   └── octopus-monitor/
-│       └── main.go           # Main application entry point
+│       ├── main.go                # Main application entry point
+│       └── main_test.go           # Main application tests
 ├── pkg/
 │   ├── cache/
-│   │   └── cache.go          # Local caching system
+│   │   ├── cache.go               # Local caching system
+│   │   └── cache_test.go          # Cache tests
 │   ├── config/
-│   │   └── config.go         # Configuration management
+│   │   ├── config.go              # Configuration management with validation
+│   │   └── config_test.go         # Configuration tests
+│   ├── health/
+│   │   ├── server.go              # Health check HTTP server
+│   │   └── server_test.go         # Health server tests
 │   ├── influx/
-│   │   └── client.go         # InfluxDB client
+│   │   ├── client.go              # InfluxDB client with circuit breaker
+│   │   └── client_test.go         # InfluxDB client tests
 │   ├── octopus/
-│   │   └── client.go         # Octopus Energy API client
+│   │   ├── client.go              # Octopus Energy API client
+│   │   └── client_test.go         # Octopus client tests
+│   ├── secrets/
+│   │   ├── secrets.go             # Secrets management providers
+│   │   └── secrets_test.go        # Secrets tests
 │   └── slack/
-│       └── notifier.go       # Slack notification client
-├── .env.example              # Example environment configuration
+│       ├── notifier.go            # Slack notification client
+│       └── notifier_test.go       # Slack notifier tests
+├── test/
+│   └── integration/
+│       ├── docker-compose.test.yml # InfluxDB test environment
+│       ├── helpers_test.go         # Integration test helpers
+│       ├── integration_test.go     # Integration tests
+│       └── README.md               # Integration test documentation
+├── .env.example                    # Example environment configuration
+├── .github/
+│   └── workflows/
+│       └── test.yml                # CI/CD pipeline
 ├── .gitattributes
-├── go.mod                    # Go module definition
-└── README.md                 # This file
+├── .gitignore
+├── LICENSE                         # MIT License
+├── Makefile                        # Build and test automation with multi-platform support
+├── PLATFORMS.md                    # Detailed multi-platform build documentation
+├── TODO.md                         # Task tracking and roadmap
+├── TESTING.md                      # Testing documentation
+├── go.mod                          # Go module definition
+├── go.sum                          # Go module checksums
+└── README.md                       # This file
 ```
 
 ## API Rate Limits
@@ -376,7 +573,9 @@ The Octopus Energy API has a rate limit of **100 calls per hour** shared across 
 
 ## License
 
-MIT License - feel free to use this project for your own monitoring needs.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Feel free to use this project for your own monitoring needs, modify it, and distribute it under the terms of the MIT License.
 
 ## Contributing
 

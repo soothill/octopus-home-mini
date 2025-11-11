@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/cenkalti/backoff/v4"
+	"github.com/sony/gobreaker"
 )
 
 // Notifier handles sending alerts to Slack
 type Notifier struct {
-	webhookURL string
-	httpClient *http.Client
+	webhookURL     string
+	httpClient     *http.Client
+	circuitBreaker *gobreaker.CircuitBreaker
 }
 
 // Message represents a Slack message payload
@@ -39,11 +43,24 @@ type Field struct {
 
 // NewNotifier creates a new Slack notifier
 func NewNotifier(webhookURL string) *Notifier {
+	// Configure circuit breaker
+	cbSettings := gobreaker.Settings{
+		Name:        "Slack",
+		MaxRequests: 3,
+		Interval:    60 * time.Second,
+		Timeout:     30 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+			return counts.Requests >= 3 && failureRatio >= 0.6
+		},
+	}
+
 	return &Notifier{
 		webhookURL: webhookURL,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		circuitBreaker: gobreaker.NewCircuitBreaker(cbSettings),
 	}
 }
 
@@ -163,22 +180,50 @@ func (n *Notifier) SendCacheAlert(count int, action string) error {
 	return n.send(msg)
 }
 
-// send sends a message to Slack via webhook
+// send sends a message to Slack via webhook with exponential backoff retry and circuit breaker
 func (n *Notifier) send(msg Message) error {
+	_, err := n.circuitBreaker.Execute(func() (interface{}, error) {
+		return nil, n.sendWithRetry(msg)
+	})
+	return err
+}
+
+// sendWithRetry performs the actual send operation with retry logic
+func (n *Notifier) sendWithRetry(msg Message) error {
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
-	resp, err := n.httpClient.Post(n.webhookURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		return fmt.Errorf("failed to send message to Slack: %w", err)
-	}
-	defer resp.Body.Close()
+	operation := func() error {
+		resp, err := n.httpClient.Post(n.webhookURL, "application/json", bytes.NewBuffer(payload))
+		if err != nil {
+			return fmt.Errorf("failed to send message to Slack: %w", err)
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("slack returned non-OK status: %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusOK {
+			// 4xx errors are permanent (bad webhook URL, invalid payload)
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return backoff.Permanent(fmt.Errorf("slack returned client error status: %d", resp.StatusCode))
+			}
+			// 5xx errors are transient, can retry
+			return fmt.Errorf("slack returned server error status: %d", resp.StatusCode)
+		}
+
+		return nil
 	}
 
-	return nil
+	// Use a shorter timeout for Slack since notifications are less critical
+	b := backoff.NewExponentialBackOff()
+	b.MaxElapsedTime = 10 * time.Second
+
+	return backoff.Retry(operation, b)
+}
+
+// Close closes idle connections in the HTTP client
+func (n *Notifier) Close() {
+	if n.httpClient != nil {
+		n.httpClient.CloseIdleConnections()
+	}
 }

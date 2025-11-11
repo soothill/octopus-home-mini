@@ -1,5 +1,6 @@
 # Binaries
 /octopus-monitor
+/dist/
 *.exe
 *.exe~
 *.dll

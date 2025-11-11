@@ -3,19 +3,27 @@ package influx
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
 	"github.com/influxdata/influxdb-client-go/v2/api/write"
+	"github.com/sony/gobreaker"
 )
+
+// ErrorHandler is a callback function for handling write errors
+type ErrorHandler func(err error)
 
 // Client handles writing data to InfluxDB
 type Client struct {
-	client   influxdb2.Client
-	writeAPI api.WriteAPI
-	bucket   string
-	org      string
+	client         influxdb2.Client
+	writeAPI       api.WriteAPI
+	bucket         string
+	org            string
+	errorHandler   ErrorHandler
+	stopChan       chan struct{}
+	circuitBreaker *gobreaker.CircuitBreaker
 }
 
 // DataPoint represents a single energy measurement
@@ -29,6 +37,11 @@ type DataPoint struct {
 
 // NewClient creates a new InfluxDB client
 func NewClient(url, token, org, bucket string) (*Client, error) {
+	return NewClientWithErrorHandler(url, token, org, bucket, nil)
+}
+
+// NewClientWithErrorHandler creates a new InfluxDB client with a custom error handler
+func NewClientWithErrorHandler(url, token, org, bucket string, errorHandler ErrorHandler) (*Client, error) {
 	client := influxdb2.NewClient(url, token)
 
 	// Test connection
@@ -46,12 +59,54 @@ func NewClient(url, token, org, bucket string) (*Client, error) {
 
 	writeAPI := client.WriteAPI(org, bucket)
 
-	return &Client{
-		client:   client,
-		writeAPI: writeAPI,
-		bucket:   bucket,
-		org:      org,
-	}, nil
+	// Default error handler logs errors
+	if errorHandler == nil {
+		errorHandler = func(err error) {
+			log.Printf("InfluxDB write error: %v", err)
+		}
+	}
+
+	// Configure circuit breaker
+	cbSettings := gobreaker.Settings{
+		Name:        "InfluxDB",
+		MaxRequests: 3,
+		Interval:    60 * time.Second,
+		Timeout:     30 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+			return counts.Requests >= 3 && failureRatio >= 0.6
+		},
+	}
+
+	c := &Client{
+		client:         client,
+		writeAPI:       writeAPI,
+		bucket:         bucket,
+		org:            org,
+		errorHandler:   errorHandler,
+		stopChan:       make(chan struct{}),
+		circuitBreaker: gobreaker.NewCircuitBreaker(cbSettings),
+	}
+
+	// Start error monitoring goroutine
+	go c.monitorErrors()
+
+	return c, nil
+}
+
+// monitorErrors continuously monitors the WriteAPI error channel
+func (c *Client) monitorErrors() {
+	errorsChan := c.writeAPI.Errors()
+	for {
+		select {
+		case err := <-errorsChan:
+			if err != nil && c.errorHandler != nil {
+				c.errorHandler(err)
+			}
+		case <-c.stopChan:
+			return
+		}
+	}
 }
 
 // WriteDataPoint writes a single data point to InfluxDB
@@ -110,26 +165,35 @@ func (c *Client) CheckConnection(ctx context.Context) error {
 
 // Close closes the InfluxDB client
 func (c *Client) Close() {
+	// Signal error monitoring goroutine to stop
+	close(c.stopChan)
+
+	// Flush any pending writes
 	c.writeAPI.Flush()
+
+	// Close the client connection
 	c.client.Close()
 }
 
-// WritePointDirectly writes a point directly (synchronous, returns error immediately)
+// WritePointDirectly writes a point directly (synchronous, returns error immediately) with circuit breaker
 func (c *Client) WritePointDirectly(ctx context.Context, dp DataPoint) error {
-	p := write.NewPoint(
-		"energy_consumption",
-		map[string]string{
-			"source": "octopus_home_mini",
-		},
-		map[string]interface{}{
-			"consumption_delta": dp.ConsumptionDelta,
-			"demand":            dp.Demand,
-			"cost_delta":        dp.CostDelta,
-			"consumption":       dp.Consumption,
-		},
-		dp.Timestamp,
-	)
+	_, err := c.circuitBreaker.Execute(func() (interface{}, error) {
+		p := write.NewPoint(
+			"energy_consumption",
+			map[string]string{
+				"source": "octopus_home_mini",
+			},
+			map[string]interface{}{
+				"consumption_delta": dp.ConsumptionDelta,
+				"demand":            dp.Demand,
+				"cost_delta":        dp.CostDelta,
+				"consumption":       dp.Consumption,
+			},
+			dp.Timestamp,
+		)
 
-	writeAPIBlocking := c.client.WriteAPIBlocking(c.org, c.bucket)
-	return writeAPIBlocking.WritePoint(ctx, p)
+		writeAPIBlocking := c.client.WriteAPIBlocking(c.org, c.bucket)
+		return nil, writeAPIBlocking.WritePoint(ctx, p)
+	})
+	return err
 }

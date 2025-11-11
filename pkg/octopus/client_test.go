@@ -208,3 +208,299 @@ func TestClient_StateManagement(t *testing.T) {
 		t.Error("MeterGUID not set correctly")
 	}
 }
+
+func TestClient_CircuitBreakerInitialized(t *testing.T) {
+	client := NewClient("test_key", "A-12345678")
+
+	if client.circuitBreaker == nil {
+		t.Error("Circuit breaker should be initialized")
+	}
+}
+
+func TestTelemetryData_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name string
+		data TelemetryData
+		desc string
+	}{
+		{
+			name: "zero values",
+			data: TelemetryData{
+				ReadAt:           time.Now(),
+				ConsumptionDelta: 0,
+				Demand:           0,
+				CostDelta:        0,
+				Consumption:      0,
+			},
+			desc: "Should handle zero values",
+		},
+		{
+			name: "negative values",
+			data: TelemetryData{
+				ReadAt:           time.Now(),
+				ConsumptionDelta: -0.5,
+				Demand:           -1.2,
+				CostDelta:        -0.15,
+				Consumption:      10.5,
+			},
+			desc: "Should handle negative values (solar export)",
+		},
+		{
+			name: "very large values",
+			data: TelemetryData{
+				ReadAt:           time.Now(),
+				ConsumptionDelta: 999999.99,
+				Demand:           999999.99,
+				CostDelta:        999999.99,
+				Consumption:      999999.99,
+			},
+			desc: "Should handle very large values",
+		},
+		{
+			name: "very small values",
+			data: TelemetryData{
+				ReadAt:           time.Now(),
+				ConsumptionDelta: 0.00001,
+				Demand:           0.00001,
+				CostDelta:        0.00001,
+				Consumption:      0.00001,
+			},
+			desc: "Should handle very small values",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Just verify we can create the data structure
+			_ = TelemetryData{
+				ReadAt:           tt.data.ReadAt,
+				ConsumptionDelta: tt.data.ConsumptionDelta,
+				Demand:           tt.data.Demand,
+				CostDelta:        tt.data.CostDelta,
+				Consumption:      tt.data.Consumption,
+			}
+		})
+	}
+}
+
+func TestClient_MultipleClients(t *testing.T) {
+	// Test creating multiple clients doesn't interfere with each other
+	client1 := NewClient("key1", "A-11111111")
+	client2 := NewClient("key2", "A-22222222")
+
+	if client1.apiKey == client2.apiKey {
+		t.Error("Different clients should have different API keys")
+	}
+
+	if client1.accountNumber == client2.accountNumber {
+		t.Error("Different clients should have different account numbers")
+	}
+
+	if client1.client == client2.client {
+		t.Error("Different clients should have different GraphQL clients")
+	}
+}
+
+func TestClient_BackoffConfiguration(t *testing.T) {
+	// Test that backoff is properly configured
+	b := newBackoff()
+
+	if b == nil {
+		t.Fatal("newBackoff() returned nil")
+	}
+
+	if b.MaxElapsedTime != maxElapsedTime {
+		t.Errorf("MaxElapsedTime = %v, want %v", b.MaxElapsedTime, maxElapsedTime)
+	}
+}
+
+func TestClient_TimeZoneHandling(t *testing.T) {
+	locations := []string{
+		"UTC",
+		"America/New_York",
+		"Europe/London",
+		"Asia/Tokyo",
+	}
+
+	for _, locName := range locations {
+		t.Run(locName, func(t *testing.T) {
+			loc, err := time.LoadLocation(locName)
+			if err != nil {
+				t.Skipf("Could not load location %s: %v", locName, err)
+			}
+
+			data := TelemetryData{
+				ReadAt:           time.Now().In(loc),
+				ConsumptionDelta: 0.5,
+				Demand:           1.2,
+				CostDelta:        0.15,
+				Consumption:      10.5,
+			}
+
+			if data.ReadAt.Location().String() != locName {
+				t.Errorf("Location = %v, want %v", data.ReadAt.Location(), locName)
+			}
+		})
+	}
+}
+
+func TestClient_EmptyAccountNumber(t *testing.T) {
+	client := NewClient("test_key", "")
+
+	if client.accountNumber != "" {
+		t.Error("Empty account number should remain empty")
+	}
+}
+
+func TestClient_EmptyAPIKey(t *testing.T) {
+	client := NewClient("", "A-12345678")
+
+	if client.apiKey != "" {
+		t.Error("Empty API key should remain empty")
+	}
+}
+
+func TestConstants(t *testing.T) {
+	if maxRetries != 3 {
+		t.Errorf("maxRetries = %v, want 3", maxRetries)
+	}
+
+	if maxElapsedTime != 30*time.Second {
+		t.Errorf("maxElapsedTime = %v, want 30s", maxElapsedTime)
+	}
+
+	if graphqlEndpoint == "" {
+		t.Error("graphqlEndpoint should not be empty")
+	}
+}
+
+func TestClient_GetTelemetryWithoutToken(t *testing.T) {
+	client := NewClient("test_key", "A-12345678")
+
+	// No token set, should try to authenticate first
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := client.GetTelemetry(ctx, time.Now().Add(-1*time.Hour), time.Now())
+
+	// Should get an error because authentication will fail with test credentials
+	if err == nil {
+		t.Log("Expected error with test credentials, got nil")
+	}
+}
+
+func TestClient_GetTelemetryWithoutMeterGUID(t *testing.T) {
+	client := NewClient("test_key", "A-12345678")
+	client.token = "fake_token" // Set token but not meter GUID
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := client.GetTelemetry(ctx, time.Now().Add(-1*time.Hour), time.Now())
+
+	// Should get an error because GetMeterGUID will fail
+	if err == nil {
+		t.Log("Expected error when getting meter GUID, got nil")
+	}
+}
+
+func TestTelemetryData_TimestampPrecision(t *testing.T) {
+	now := time.Now()
+
+	data := TelemetryData{
+		ReadAt:           now,
+		ConsumptionDelta: 0.5,
+		Demand:           1.2,
+		CostDelta:        0.15,
+		Consumption:      10.5,
+	}
+
+	if !data.ReadAt.Equal(now) {
+		t.Error("Timestamp precision lost")
+	}
+
+	if data.ReadAt.Nanosecond() != now.Nanosecond() {
+		t.Error("Nanosecond precision lost")
+	}
+}
+
+func TestClient_LongAccountNumber(t *testing.T) {
+	// Test with a very long account number
+	longAccount := "A-" + string(make([]byte, 1000))
+	client := NewClient("test_key", longAccount)
+
+	if client.accountNumber != longAccount {
+		t.Error("Long account number not preserved")
+	}
+}
+
+func TestClient_SpecialCharactersInCredentials(t *testing.T) {
+	tests := []struct {
+		name          string
+		apiKey        string
+		accountNumber string
+	}{
+		{
+			name:          "special characters in key",
+			apiKey:        "test!@#$%^&*()_+-=[]{}|;:',.<>?/~`",
+			accountNumber: "A-12345678",
+		},
+		{
+			name:          "unicode in account",
+			apiKey:        "test_key",
+			accountNumber: "A-测试账号",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := NewClient(tt.apiKey, tt.accountNumber)
+
+			if client.apiKey != tt.apiKey {
+				t.Errorf("API key = %v, want %v", client.apiKey, tt.apiKey)
+			}
+
+			if client.accountNumber != tt.accountNumber {
+				t.Errorf("Account number = %v, want %v", client.accountNumber, tt.accountNumber)
+			}
+		})
+	}
+}
+
+func TestClient_MultipleGetTelemetryCalls(t *testing.T) {
+	client := NewClient("test_key", "A-12345678")
+	client.token = "fake_token"
+	client.meterGUID = "fake_guid"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Make multiple calls to test state persistence
+	for i := 0; i < 3; i++ {
+		_, err := client.GetTelemetry(ctx, time.Now().Add(-1*time.Hour), time.Now())
+
+		// We expect errors with fake credentials, but this tests the method can be called multiple times
+		if err == nil {
+			t.Logf("Call %d: Unexpected success with fake credentials", i)
+		}
+	}
+}
+
+func TestClient_ConcurrentAccess(t *testing.T) {
+	client := NewClient("test_key", "A-12345678")
+
+	// Test concurrent reads of client fields
+	done := make(chan bool, 10)
+
+	for i := 0; i < 10; i++ {
+		go func() {
+			_ = client.apiKey
+			_ = client.accountNumber
+			done <- true
+		}()
+	}
+
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+}

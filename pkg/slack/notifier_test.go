@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewNotifier(t *testing.T) {
-	webhookURL := "https://hooks.slack.com/test"
+	webhookURL := "https://example.com/test-webhook"
 	notifier := NewNotifier(webhookURL)
 
 	if notifier == nil {
