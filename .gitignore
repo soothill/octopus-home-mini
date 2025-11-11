@@ -18,9 +18,9 @@ go.work
 # Environment variables
 .env
 
-# Cache directory
-cache/
-cache/*.json
+# Runtime cache directory (at root only, not pkg/cache source code)
+/cache/
+/cache/*.json
 
 # IDE
 .vscode/
