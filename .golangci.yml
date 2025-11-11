@@ -27,6 +27,8 @@ linters-settings:
     enable-all: true
     disable:
       - shadow
+      - fieldalignment  # Struct field alignment is a minor optimization
+      - unusedwrite     # Sometimes we create structs for testing structure
 
   staticcheck:
     checks: ["all"]

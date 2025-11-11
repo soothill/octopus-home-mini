@@ -31,21 +31,24 @@ type Monitor struct {
 // sendSlackError sends an error notification to Slack if enabled
 func (m *Monitor) sendSlackError(component, message string) {
 	if m.slackNotifier != nil {
-		m.slackNotifier.SendError(component, message)
+		//nolint:errcheck // Slack notification errors should not stop the monitor
+		_ = m.slackNotifier.SendError(component, message)
 	}
 }
 
 // sendSlackWarning sends a warning notification to Slack if enabled
 func (m *Monitor) sendSlackWarning(component, message string) {
 	if m.slackNotifier != nil {
-		m.slackNotifier.SendWarning(component, message)
+		//nolint:errcheck // Slack notification errors should not stop the monitor
+		_ = m.slackNotifier.SendWarning(component, message)
 	}
 }
 
 // sendSlackInfo sends an info notification to Slack if enabled
 func (m *Monitor) sendSlackInfo(title, message string) {
 	if m.slackNotifier != nil {
-		m.slackNotifier.SendInfo(title, message)
+		//nolint:errcheck // Slack notification errors should not stop the monitor
+		_ = m.slackNotifier.SendInfo(title, message)
 	}
 }
 
@@ -89,7 +92,8 @@ func main() {
 	if err != nil {
 		log.Printf("Warning: Failed to connect to InfluxDB: %v. Will cache data locally.", err)
 		if slackNotifier != nil {
-			slackNotifier.SendWarning("InfluxDB", fmt.Sprintf("Failed to connect to InfluxDB: %v. Caching data locally.", err))
+			//nolint:errcheck // Slack notification errors should not stop the monitor
+			_ = slackNotifier.SendWarning("InfluxDB", fmt.Sprintf("Failed to connect to InfluxDB: %v. Caching data locally.", err))
 		}
 	} else {
 		log.Println("InfluxDB client initialized successfully")
@@ -109,7 +113,8 @@ func main() {
 
 	// Send startup notification
 	if slackNotifier != nil {
-		slackNotifier.SendInfo("Monitor Started", "Octopus Home Mini monitor has started successfully")
+		//nolint:errcheck // Slack notification errors should not stop the monitor
+		_ = slackNotifier.SendInfo("Monitor Started", "Octopus Home Mini monitor has started successfully")
 	}
 
 	// Try to sync any cached data on startup

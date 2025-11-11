@@ -33,7 +33,8 @@ type Config struct {
 
 // Load reads configuration from environment variables
 func Load() (*Config, error) {
-	// Try to load .env file (optional)
+	// Try to load .env file (optional - ignore errors if it doesn't exist)
+	//nolint:errcheck // .env file is optional
 	_ = godotenv.Load()
 
 	pollIntervalSec := getEnvAsInt("POLL_INTERVAL_SECONDS", 30)
