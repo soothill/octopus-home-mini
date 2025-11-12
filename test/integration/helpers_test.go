@@ -64,19 +64,9 @@ func MockOctopusServer(t *testing.T) *httptest.Server {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{
-			"data": {
-				"smartMeterTelemetry": [
-					{
-						"readAt": "%s",
-						"consumptionDelta": 0.5,
-						"demand": 1.2,
-						"costDelta": 0.15,
-						"consumption": 10.5
-					}
-				]
-			}
-		}`, time.Now().Format(time.RFC3339))
+		// A more robust mock would inspect the request body to determine which response to send.
+		// For this test, we'll just send back a valid token response.
+		fmt.Fprintln(w, `{"data":{"obtainKrakenToken":{"token":"test-token"}}}`)
 	})
 
 	return httptest.NewServer(handler)
@@ -135,4 +125,17 @@ func CreateCacheDataPoints(count int) []cache.DataPoint {
 	}
 
 	return data
+}
+
+// SetupTestEnvironment sets up a full test environment for integration tests
+func SetupTestEnvironment(t *testing.T) (*config.Config, *httptest.Server) {
+	t.Helper()
+
+	cfg := NewTestConfig(t)
+	SkipIfNoInfluxDB(t, cfg)
+
+	// Mock Octopus API server
+	server := MockOctopusServer(t)
+
+	return cfg, server
 }

@@ -1,0 +1,37 @@
+# Octopus Energy API Configuration
+octopus_api_key: "YOUR_API_KEY"
+octopus_account_number: "YOUR_ACCOUNT_NUMBER"
+
+# InfluxDB Configuration
+influxdb_url: "http://localhost:8086"
+influxdb_token: "YOUR_INFLUXDB_TOKEN"
+influxdb_org: "YOUR_INFLUXDB_ORG"
+influxdb_bucket: "octopus_energy"
+influxdb_measurement: "energy_consumption"
+
+# Slack Configuration (Optional)
+slack_webhook_url: "YOUR_SLACK_WEBHOOK_URL"
+slack_enabled: true
+
+# Application Settings
+poll_interval_seconds: 30
+cache_dir: "./cache"
+log_level: "info"
+
+# Timeout Configurations
+influx_connect_timeout_seconds: 30
+influx_write_timeout_seconds: 10
+poll_timeout_seconds: 30
+shutdown_timeout_seconds: 5
+cache_sync_timeout_seconds: 60
+reconnect_max_elapsed_seconds: 300
+consecutive_error_threshold: 3
+max_backoff_factor: 4
+
+# Cache Cleanup Settings
+cache_cleanup_enabled: true
+cache_cleanup_interval_hours: 24
+cache_retention_days: 7
+
+# Health Server Settings
+health_server_addr: ":8080"

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -37,111 +38,177 @@ var (
 // Config holds all application configuration
 type Config struct {
 	// Octopus Energy API
-	OctopusAPIKey        string
-	OctopusAccountNumber string
+	OctopusAPIKey        string `yaml:"octopus_api_key"`
+	OctopusAccountNumber string `yaml:"octopus_account_number"`
 
 	// InfluxDB
-	InfluxDBURL         string
-	InfluxDBToken       string
-	InfluxDBOrg         string
-	InfluxDBBucket      string
-	InfluxDBMeasurement string
+	InfluxDBURL         string `yaml:"influxdb_url"`
+	InfluxDBToken       string `yaml:"influxdb_token"`
+	InfluxDBOrg         string `yaml:"influxdb_org"`
+	InfluxDBBucket      string `yaml:"influxdb_bucket"`
+	InfluxDBMeasurement string `yaml:"influxdb_measurement"`
 
 	// Slack (optional)
-	SlackWebhookURL string
-	SlackEnabled    bool
+	SlackWebhookURL string `yaml:"slack_webhook_url"`
+	SlackEnabled    bool   `yaml:"slack_enabled"`
 
 	// Application settings
-	PollInterval time.Duration
-	CacheDir     string
-	LogLevel     string
+	PollInterval time.Duration `yaml:"poll_interval_seconds"`
+	CacheDir     string        `yaml:"cache_dir"`
+	LogLevel     string        `yaml:"log_level"`
 
 	// Timeout configurations
-	InfluxConnectTimeout      time.Duration
-	InfluxWriteTimeout        time.Duration
-	PollTimeout               time.Duration
-	ShutdownTimeout           time.Duration
-	CacheSyncTimeout          time.Duration
-	ReconnectMaxElapsedTime   time.Duration
-	ConsecutiveErrorThreshold int
-	MaxBackoffFactor          int
+	InfluxConnectTimeout      time.Duration `yaml:"influx_connect_timeout_seconds"`
+	InfluxWriteTimeout        time.Duration `yaml:"influx_write_timeout_seconds"`
+	PollTimeout               time.Duration `yaml:"poll_timeout_seconds"`
+	ShutdownTimeout           time.Duration `yaml:"shutdown_timeout_seconds"`
+	CacheSyncTimeout          time.Duration `yaml:"cache_sync_timeout_seconds"`
+	ReconnectMaxElapsedTime   time.Duration `yaml:"reconnect_max_elapsed_seconds"`
+	ConsecutiveErrorThreshold int           `yaml:"consecutive_error_threshold"`
+	MaxBackoffFactor          int           `yaml:"max_backoff_factor"`
 
 	// Cache cleanup settings
-	CacheCleanupEnabled  bool
-	CacheCleanupInterval time.Duration
-	CacheRetentionDays   int
+	CacheCleanupEnabled  bool          `yaml:"cache_cleanup_enabled"`
+	CacheCleanupInterval time.Duration `yaml:"cache_cleanup_interval_hours"`
+	CacheRetentionDays   int           `yaml:"cache_retention_days"`
 
 	// Health server settings
-	HealthServerAddr string
+	HealthServerAddr string `yaml:"health_server_addr"`
 }
 
-// Load reads configuration from environment variables
+// Load reads configuration from a YAML file and overrides with environment variables
 func Load() (*Config, error) {
+	cfg := defaultConfig()
+
+	// Load config from YAML file if it exists
+	if _, err := os.Stat("config.yaml"); err == nil {
+		yamlFile, err := os.ReadFile("config.yaml")
+		if err != nil {
+			return nil, fmt.Errorf("error reading config.yaml: %w", err)
+		}
+		if err := yaml.Unmarshal(yamlFile, cfg); err != nil {
+			return nil, fmt.Errorf("error unmarshalling config.yaml: %w", err)
+		}
+	}
+
 	// Try to load .env file (optional - ignore errors if it doesn't exist)
 	//nolint:errcheck // .env file is optional
 	_ = godotenv.Load()
 
-	pollIntervalSec := getEnvAsInt("POLL_INTERVAL_SECONDS", 30)
-	slackWebhookURL := getEnv("SLACK_WEBHOOK_URL", "")
-	slackEnabled := getEnvAsBool("SLACK_ENABLED", true) && slackWebhookURL != ""
+	// Override with environment variables
+	overrideWithEnv(cfg)
 
-	// Sanitize cache directory path to prevent path traversal
-	cacheDir := getEnv("CACHE_DIR", "./cache")
-	cacheDir = sanitizePath(cacheDir)
-
-	// Normalize log level to lowercase
-	logLevel := strings.ToLower(getEnv("LOG_LEVEL", "info"))
-
-	// Timeout configurations
-	influxConnectTimeout := getEnvAsInt("INFLUX_CONNECT_TIMEOUT_SECONDS", 30)
-	influxWriteTimeout := getEnvAsInt("INFLUX_WRITE_TIMEOUT_SECONDS", 10)
-	pollTimeout := getEnvAsInt("POLL_TIMEOUT_SECONDS", 30)
-	shutdownTimeout := getEnvAsInt("SHUTDOWN_TIMEOUT_SECONDS", 5)
-	cacheSyncTimeout := getEnvAsInt("CACHE_SYNC_TIMEOUT_SECONDS", 60)
-	reconnectMaxElapsed := getEnvAsInt("RECONNECT_MAX_ELAPSED_SECONDS", 300) // 5 minutes
-	consecutiveErrorThreshold := getEnvAsInt("CONSECUTIVE_ERROR_THRESHOLD", 3)
-	maxBackoffFactor := getEnvAsInt("MAX_BACKOFF_FACTOR", 4)
-
-	// Cache cleanup configurations
-	cacheCleanupEnabled := getEnvAsBool("CACHE_CLEANUP_ENABLED", true)
-	cacheCleanupInterval := getEnvAsInt("CACHE_CLEANUP_INTERVAL_HOURS", 24)
-	cacheRetentionDays := getEnvAsInt("CACHE_RETENTION_DAYS", 7)
-
-	// Health server configuration
-	healthServerAddr := getEnv("HEALTH_SERVER_ADDR", ":8080")
-
-	cfg := &Config{
-		OctopusAPIKey:             strings.TrimSpace(getEnv("OCTOPUS_API_KEY", "")),
-		OctopusAccountNumber:      strings.TrimSpace(getEnv("OCTOPUS_ACCOUNT_NUMBER", "")),
-		InfluxDBURL:               strings.TrimSpace(getEnv("INFLUXDB_URL", "http://localhost:8086")),
-		InfluxDBToken:             strings.TrimSpace(getEnv("INFLUXDB_TOKEN", "")),
-		InfluxDBOrg:               strings.TrimSpace(getEnv("INFLUXDB_ORG", "")),
-		InfluxDBBucket:            strings.TrimSpace(getEnv("INFLUXDB_BUCKET", "octopus_energy")),
-		InfluxDBMeasurement:       strings.TrimSpace(getEnv("INFLUXDB_MEASUREMENT", "energy_consumption")),
-		SlackWebhookURL:           strings.TrimSpace(slackWebhookURL),
-		SlackEnabled:              slackEnabled,
-		PollInterval:              time.Duration(pollIntervalSec) * time.Second,
-		CacheDir:                  cacheDir,
-		LogLevel:                  logLevel,
-		InfluxConnectTimeout:      time.Duration(influxConnectTimeout) * time.Second,
-		InfluxWriteTimeout:        time.Duration(influxWriteTimeout) * time.Second,
-		PollTimeout:               time.Duration(pollTimeout) * time.Second,
-		ShutdownTimeout:           time.Duration(shutdownTimeout) * time.Second,
-		CacheSyncTimeout:          time.Duration(cacheSyncTimeout) * time.Second,
-		ReconnectMaxElapsedTime:   time.Duration(reconnectMaxElapsed) * time.Second,
-		ConsecutiveErrorThreshold: consecutiveErrorThreshold,
-		MaxBackoffFactor:          maxBackoffFactor,
-		CacheCleanupEnabled:       cacheCleanupEnabled,
-		CacheCleanupInterval:      time.Duration(cacheCleanupInterval) * time.Hour,
-		CacheRetentionDays:        cacheRetentionDays,
-		HealthServerAddr:          healthServerAddr,
-	}
+	// Post-processing and final adjustments
+	cfg.SlackEnabled = cfg.SlackEnabled && cfg.SlackWebhookURL != ""
+	cfg.CacheDir = sanitizePath(cfg.CacheDir)
+	cfg.LogLevel = strings.ToLower(cfg.LogLevel)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 
 	return cfg, nil
+}
+
+// defaultConfig returns a new Config with default values
+func defaultConfig() *Config {
+	return &Config{
+		InfluxDBURL:               "http://localhost:8086",
+		InfluxDBBucket:            "octopus_energy",
+		InfluxDBMeasurement:       "energy_consumption",
+		PollInterval:              30 * time.Second,
+		CacheDir:                  "./cache",
+		LogLevel:                  "info",
+		InfluxConnectTimeout:      30 * time.Second,
+		InfluxWriteTimeout:        10 * time.Second,
+		PollTimeout:               30 * time.Second,
+		ShutdownTimeout:           5 * time.Second,
+		CacheSyncTimeout:          60 * time.Second,
+		ReconnectMaxElapsedTime:   300 * time.Second, // 5 minutes
+		ConsecutiveErrorThreshold: 3,
+		MaxBackoffFactor:          4,
+		CacheCleanupEnabled:       true,
+		CacheCleanupInterval:      24 * time.Hour,
+		CacheRetentionDays:        7,
+		HealthServerAddr:          ":8080",
+		SlackEnabled:              true,
+	}
+}
+
+// overrideWithEnv overrides config fields with values from environment variables if they are set
+func overrideWithEnv(cfg *Config) {
+	if val := getEnv("OCTOPUS_API_KEY", ""); val != "" {
+		cfg.OctopusAPIKey = strings.TrimSpace(val)
+	}
+	if val := getEnv("OCTOPUS_ACCOUNT_NUMBER", ""); val != "" {
+		cfg.OctopusAccountNumber = strings.TrimSpace(val)
+	}
+	if val := getEnv("INFLUXDB_URL", ""); val != "" {
+		cfg.InfluxDBURL = strings.TrimSpace(val)
+	}
+	if val := getEnv("INFLUXDB_TOKEN", ""); val != "" {
+		cfg.InfluxDBToken = strings.TrimSpace(val)
+	}
+	if val := getEnv("INFLUXDB_ORG", ""); val != "" {
+		cfg.InfluxDBOrg = strings.TrimSpace(val)
+	}
+	if val := getEnv("INFLUXDB_BUCKET", ""); val != "" {
+		cfg.InfluxDBBucket = strings.TrimSpace(val)
+	}
+	if val := getEnv("INFLUXDB_MEASUREMENT", ""); val != "" {
+		cfg.InfluxDBMeasurement = strings.TrimSpace(val)
+	}
+	if val := getEnv("SLACK_WEBHOOK_URL", ""); val != "" {
+		cfg.SlackWebhookURL = strings.TrimSpace(val)
+	}
+	if val, isSet := getEnvAsBoolPtr("SLACK_ENABLED"); isSet {
+		cfg.SlackEnabled = *val
+	}
+	if val, isSet := getEnvAsIntPtr("POLL_INTERVAL_SECONDS"); isSet {
+		cfg.PollInterval = time.Duration(*val) * time.Second
+	}
+	if val := getEnv("CACHE_DIR", ""); val != "" {
+		cfg.CacheDir = val
+	}
+	if val := getEnv("LOG_LEVEL", ""); val != "" {
+		cfg.LogLevel = val
+	}
+	if val, isSet := getEnvAsIntPtr("INFLUX_CONNECT_TIMEOUT_SECONDS"); isSet {
+		cfg.InfluxConnectTimeout = time.Duration(*val) * time.Second
+	}
+	if val, isSet := getEnvAsIntPtr("INFLUX_WRITE_TIMEOUT_SECONDS"); isSet {
+		cfg.InfluxWriteTimeout = time.Duration(*val) * time.Second
+	}
+	if val, isSet := getEnvAsIntPtr("POLL_TIMEOUT_SECONDS"); isSet {
+		cfg.PollTimeout = time.Duration(*val) * time.Second
+	}
+	if val, isSet := getEnvAsIntPtr("SHUTDOWN_TIMEOUT_SECONDS"); isSet {
+		cfg.ShutdownTimeout = time.Duration(*val) * time.Second
+	}
+	if val, isSet := getEnvAsIntPtr("CACHE_SYNC_TIMEOUT_SECONDS"); isSet {
+		cfg.CacheSyncTimeout = time.Duration(*val) * time.Second
+	}
+	if val, isSet := getEnvAsIntPtr("RECONNECT_MAX_ELAPSED_SECONDS"); isSet {
+		cfg.ReconnectMaxElapsedTime = time.Duration(*val) * time.Second
+	}
+	if val, isSet := getEnvAsIntPtr("CONSECUTIVE_ERROR_THRESHOLD"); isSet {
+		cfg.ConsecutiveErrorThreshold = *val
+	}
+	if val, isSet := getEnvAsIntPtr("MAX_BACKOFF_FACTOR"); isSet {
+		cfg.MaxBackoffFactor = *val
+	}
+	if val, isSet := getEnvAsBoolPtr("CACHE_CLEANUP_ENABLED"); isSet {
+		cfg.CacheCleanupEnabled = *val
+	}
+	if val, isSet := getEnvAsIntPtr("CACHE_CLEANUP_INTERVAL_HOURS"); isSet {
+		cfg.CacheCleanupInterval = time.Duration(*val) * time.Hour
+	}
+	if val, isSet := getEnvAsIntPtr("CACHE_RETENTION_DAYS"); isSet {
+		cfg.CacheRetentionDays = *val
+	}
+	if val := getEnv("HEALTH_SERVER_ADDR", ""); val != "" {
+		cfg.HealthServerAddr = val
+	}
 }
 
 // Validate checks if required configuration values are present and valid
@@ -360,6 +427,30 @@ func getEnvAsBool(key string, defaultValue bool) bool {
 		return defaultValue
 	}
 	return value
+}
+
+// Helper functions to get env vars as pointers to distinguish between unset and zero-value
+func getEnvAsIntPtr(key string) (*int, bool) {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return nil, false
+	}
+	if value, err := strconv.Atoi(valueStr); err == nil {
+		return &value, true
+	}
+	return nil, false
+}
+
+func getEnvAsBoolPtr(key string) (*bool, bool) {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return nil, false
+	}
+	value, err := strconv.ParseBool(valueStr)
+	if err != nil {
+		return nil, false
+	}
+	return &value, true
 }
 
 // validateURL validates a URL to prevent SSRF and other attacks

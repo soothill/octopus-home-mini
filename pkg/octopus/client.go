@@ -37,6 +37,11 @@ type TelemetryData struct {
 
 // NewClient creates a new Octopus Energy API client
 func NewClient(apiKey, accountNumber string) *Client {
+	return NewClientWithEndpoint(apiKey, accountNumber, graphqlEndpoint)
+}
+
+// NewClientWithEndpoint creates a new Octopus Energy API client with a specific endpoint
+func NewClientWithEndpoint(apiKey, accountNumber, endpoint string) *Client {
 	// Configure circuit breaker
 	cbSettings := gobreaker.Settings{
 		Name:        "OctopusAPI",
@@ -56,7 +61,7 @@ func NewClient(apiKey, accountNumber string) *Client {
 	return &Client{
 		apiKey:         apiKey,
 		accountNumber:  accountNumber,
-		client:         graphql.NewClient(graphqlEndpoint),
+		client:         graphql.NewClient(endpoint),
 		circuitBreaker: gobreaker.NewCircuitBreaker(cbSettings),
 	}
 }

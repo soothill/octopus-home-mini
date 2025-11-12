@@ -3,7 +3,6 @@ run:
   tests: true
   build-tags:
     - integration
-  modules-download-mode: readonly
 
 linters:
   disable-all: true
@@ -17,6 +16,9 @@ linters:
     - gofmt         # Check formatting
     - misspell      # Spelling mistakes
     - revive        # Fast, configurable, extensible linter
+    - gocyclo       # Cyclomatic complexity
+    - gocritic      # More checks
+    - stylecheck    # Style enforcement
 
 linters-settings:
   errcheck:
@@ -27,8 +29,10 @@ linters-settings:
     enable-all: true
     disable:
       - shadow
-      - fieldalignment  # Struct field alignment is a minor optimization
       - unusedwrite     # Sometimes we create structs for testing structure
+
+  gocyclo:
+    min-complexity: 15
 
   staticcheck:
     checks: ["all"]
