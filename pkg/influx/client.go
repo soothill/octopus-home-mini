@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
@@ -25,6 +26,7 @@ type Client struct {
 	errorHandler   ErrorHandler
 	stopChan       chan struct{}
 	circuitBreaker *gobreaker.CircuitBreaker
+	wg             sync.WaitGroup // Tracks the error monitoring goroutine
 }
 
 // DataPoint represents a single energy measurement
@@ -91,6 +93,7 @@ func NewClientWithErrorHandler(url, token, org, bucket, measurement string, erro
 	}
 
 	// Start error monitoring goroutine
+	c.wg.Add(1)
 	go c.monitorErrors()
 
 	return c, nil
@@ -98,12 +101,34 @@ func NewClientWithErrorHandler(url, token, org, bucket, measurement string, erro
 
 // monitorErrors continuously monitors the WriteAPI error channel
 func (c *Client) monitorErrors() {
+	// Signal that the goroutine has finished when exiting
+	defer c.wg.Done()
+
+	// Add panic recovery to prevent goroutine from crashing
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("InfluxDB error monitor recovered from panic: %v", r)
+		}
+	}()
+
 	errorsChan := c.writeAPI.Errors()
 	for {
 		select {
-		case err := <-errorsChan:
+		case err, ok := <-errorsChan:
+			// Channel closed, exit gracefully
+			if !ok {
+				return
+			}
 			if err != nil && c.errorHandler != nil {
-				c.errorHandler(err)
+				// Wrap error handler in panic recovery
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("Error handler panicked: %v", r)
+						}
+					}()
+					c.errorHandler(err)
+				}()
 			}
 		case <-c.stopChan:
 			return
@@ -169,6 +194,9 @@ func (c *Client) CheckConnection(ctx context.Context) error {
 func (c *Client) Close() {
 	// Signal error monitoring goroutine to stop
 	close(c.stopChan)
+
+	// Wait for the error monitoring goroutine to finish
+	c.wg.Wait()
 
 	// Flush any pending writes
 	c.writeAPI.Flush()
