@@ -17,6 +17,23 @@ import (
 	"github.com/soothill/octopus-home-mini/pkg/slack"
 )
 
+// Clock interface for time-related functions
+type Clock interface {
+	Now() time.Time
+	NewTicker(d time.Duration) *time.Ticker
+}
+
+// SystemClock implements the Clock interface using the time package
+type SystemClock struct{}
+
+func (c *SystemClock) Now() time.Time {
+	return time.Now()
+}
+
+func (c *SystemClock) NewTicker(d time.Duration) *time.Ticker {
+	return time.NewTicker(d)
+}
+
 // Monitor handles the main monitoring loop
 type Monitor struct {
 	Cfg           *config.Config
@@ -24,27 +41,37 @@ type Monitor struct {
 	InfluxClient  *influx.Client
 	Cache         *cache.Cache
 	SlackNotifier *slack.Notifier // May be nil if Slack is disabled
+	Clock         Clock
 	LastPollTime  time.Time
 
-	// Fields accessed from multiple goroutines - protected by mu
-	mu             sync.RWMutex
-	influxHealthy  bool
-	consecutiveErr int
-	degradedMode   bool // True when system is operating in degraded mode
-	backoffFactor  int  // Multiplier for poll interval when in degraded mode
+	// Internal state - protected by mu
+	mu    sync.RWMutex
+	state *State
+}
+
+// State holds the internal state of the monitor
+type State struct {
+	InfluxHealthy  bool
+	ConsecutiveErr int
+	DegradedMode   bool
+	BackoffFactor  int
 }
 
 func New(cfg *config.Config, octopusClient *octopus.Client, influxClient *influx.Client, cache *cache.Cache, slackNotifier *slack.Notifier) *Monitor {
+	clock := &SystemClock{}
 	return &Monitor{
 		Cfg:           cfg,
 		OctopusClient: octopusClient,
 		InfluxClient:  influxClient,
 		Cache:         cache,
 		SlackNotifier: slackNotifier,
-		LastPollTime:  time.Now().Add(-cfg.PollInterval),
-		influxHealthy: influxClient != nil,
-		degradedMode:  false,
-		backoffFactor: 1,
+		Clock:         clock,
+		LastPollTime:  clock.Now().Add(-cfg.PollInterval),
+		state: &State{
+			InfluxHealthy: influxClient != nil,
+			DegradedMode:  false,
+			BackoffFactor: 1,
+		},
 	}
 }
 
@@ -80,65 +107,78 @@ func (m *Monitor) SendSlackInfo(title, message string) {
 func (m *Monitor) getInfluxHealthy() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.influxHealthy
+	return m.state.InfluxHealthy
 }
 
 func (m *Monitor) setInfluxHealthy(healthy bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.influxHealthy = healthy
+	m.state.InfluxHealthy = healthy
 }
 
 func (m *Monitor) getConsecutiveErr() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.consecutiveErr
+	return m.state.ConsecutiveErr
 }
 
 func (m *Monitor) incrementConsecutiveErr() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.consecutiveErr++
+	m.state.ConsecutiveErr++
 }
 
 func (m *Monitor) resetConsecutiveErr() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.consecutiveErr = 0
+	m.state.ConsecutiveErr = 0
 }
 
 func (m *Monitor) getDegradedMode() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.degradedMode
+	return m.state.DegradedMode
 }
 
 func (m *Monitor) setDegradedMode(degraded bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.degradedMode = degraded
+	m.state.DegradedMode = degraded
 }
 
 func (m *Monitor) getBackoffFactor() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.backoffFactor
+	return m.state.BackoffFactor
 }
 
 func (m *Monitor) setBackoffFactor(factor int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.backoffFactor = factor
+	m.state.BackoffFactor = factor
 }
 
 func (m *Monitor) incrementBackoffFactor() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.backoffFactor++
+	m.state.BackoffFactor++
 }
 
+var (
+	// Pre-compile regex for efficiency
+	sensitivePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`sk_[a-zA-Z0-9_-]{20,}`),      // Octopus API keys
+		regexp.MustCompile(`[a-zA-Z0-9_-]{32,}`),         // Generic long tokens
+		regexp.MustCompile(`Bearer\s+[a-zA-Z0-9_\-\.]+`), // Bearer tokens
+		regexp.MustCompile(`token=[a-zA-Z0-9_\-\.]+`),    // URL query tokens
+		regexp.MustCompile(`api_key=[a-zA-Z0-9_\-\.]+`),  // URL query API keys
+		regexp.MustCompile(`password=[^&\s]+`),           // Passwords in URLs
+		regexp.MustCompile(`Authorization:\s*[^\s]+`),    // Authorization headers
+	}
+	authPattern = regexp.MustCompile(`://[^:]+:[^@]+@`)
+)
+
 // sanitizeError removes sensitive information from error messages
-// This prevents API keys, tokens, and other credentials from being exposed in logs
 func sanitizeError(err error) string {
 	if err == nil {
 		return ""
@@ -146,27 +186,12 @@ func sanitizeError(err error) string {
 
 	errStr := err.Error()
 
-	// List of sensitive patterns to redact
-	sensitivePatterns := []string{
-		// API keys (typically 32+ alphanumeric characters)
-		`sk_[a-zA-Z0-9_-]{20,}`,      // Octopus API keys
-		`[a-zA-Z0-9_-]{32,}`,         // Generic long tokens
-		`Bearer\s+[a-zA-Z0-9_\-\.]+`, // Bearer tokens
-		`token=[a-zA-Z0-9_\-\.]+`,    // URL query tokens
-		`api_key=[a-zA-Z0-9_\-\.]+`,  // URL query API keys
-		`password=[^&\s]+`,           // Passwords in URLs
-		`Authorization:\s*[^\s]+`,    // Authorization headers
+	for _, re := range sensitivePatterns {
+		errStr = re.ReplaceAllString(errStr, "[REDACTED]")
 	}
 
-	// Replace each sensitive pattern with [REDACTED]
-	for _, pattern := range sensitivePatterns {
-		errStr = regexp.MustCompile(pattern).ReplaceAllString(errStr, "[REDACTED]")
-	}
-
-	// Also redact any basic auth credentials in URLs
-	// Format: http://username:password@host
 	if strings.Contains(errStr, "://") && strings.Contains(errStr, "@") {
-		errStr = regexp.MustCompile(`://[^:]+:[^@]+@`).ReplaceAllString(errStr, "://[REDACTED]:[REDACTED]@")
+		errStr = authPattern.ReplaceAllString(errStr, "://[REDACTED]:[REDACTED]@")
 	}
 
 	return errStr
@@ -174,7 +199,7 @@ func sanitizeError(err error) string {
 
 // Run executes the main monitoring loop with adaptive polling
 func (m *Monitor) Run(stopChan chan struct{}) {
-	ticker := time.NewTicker(m.Cfg.PollInterval)
+	ticker := m.Clock.NewTicker(m.Cfg.PollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -201,8 +226,17 @@ func (m *Monitor) poll() {
 	ctx, cancel := context.WithTimeout(context.Background(), m.Cfg.PollTimeout)
 	defer cancel()
 
-	// Calculate time range for query
-	now := time.Now()
+	telemetryData, err := m.fetchData(ctx)
+	if err != nil {
+		m.handleFetchError(err)
+		return
+	}
+
+	m.handleFetchSuccess(telemetryData)
+}
+
+func (m *Monitor) fetchData(ctx context.Context) ([]octopus.TelemetryData, error) {
+	now := m.Clock.Now()
 	start := m.LastPollTime
 	end := now
 
@@ -211,49 +245,54 @@ func (m *Monitor) poll() {
 		Time("end", end).
 		Msg("Polling for telemetry data")
 
-	// Fetch telemetry data
-	telemetryData, err := m.OctopusClient.GetTelemetry(ctx, start, end)
-	if err != nil {
-		m.incrementConsecutiveErr()
-		log.Error().Err(err).Msg("Error fetching telemetry")
+	return m.OctopusClient.GetTelemetry(ctx, start, end)
+}
 
-		// Enter degraded mode after consecutive error threshold
-		consecutiveErrs := m.getConsecutiveErr()
-		if consecutiveErrs >= m.Cfg.ConsecutiveErrorThreshold {
-			if !m.getDegradedMode() {
-				m.setDegradedMode(true)
-				m.setBackoffFactor(2) // Double the poll interval
-				m.SendSlackError("Octopus API", fmt.Sprintf("Entering degraded mode after %d consecutive errors: %v", consecutiveErrs, sanitizeError(err)))
-				log.Warn().
-					Int("consecutive_errors", consecutiveErrs).
-					Dur("new_interval", m.Cfg.PollInterval*2).
-					Msg("Entering degraded mode")
-			} else {
-				// Already in degraded mode, increase backoff up to maximum configured factor
-				currentBackoff := m.getBackoffFactor()
-				if currentBackoff < m.Cfg.MaxBackoffFactor {
-					m.incrementBackoffFactor()
-					newBackoff := m.getBackoffFactor()
-					log.Warn().
-						Int("backoff_factor", newBackoff).
-						Dur("new_interval", m.Cfg.PollInterval*time.Duration(newBackoff)).
-						Msg("Increasing backoff factor")
-				}
-			}
-		}
+func (m *Monitor) handleFetchError(err error) {
+	m.incrementConsecutiveErr()
+	log.Error().Err(err).Msg("Error fetching telemetry")
+
+	consecutiveErrs := m.getConsecutiveErr()
+	if consecutiveErrs < m.Cfg.ConsecutiveErrorThreshold {
 		return
 	}
 
-	// Exit degraded mode on successful fetch
+	if !m.getDegradedMode() {
+		m.enterDegradedMode(consecutiveErrs, err)
+	} else {
+		m.increaseBackoff()
+	}
+}
+
+func (m *Monitor) enterDegradedMode(consecutiveErrs int, err error) {
+	m.setDegradedMode(true)
+	m.setBackoffFactor(2)
+	m.SendSlackError("Octopus API", fmt.Sprintf("Entering degraded mode after %d consecutive errors: %v", consecutiveErrs, sanitizeError(err)))
+	log.Warn().
+		Int("consecutive_errors", consecutiveErrs).
+		Dur("new_interval", m.Cfg.PollInterval*2).
+		Msg("Entering degraded mode")
+}
+
+func (m *Monitor) increaseBackoff() {
+	currentBackoff := m.getBackoffFactor()
+	if currentBackoff < m.Cfg.MaxBackoffFactor {
+		m.incrementBackoffFactor()
+		newBackoff := m.getBackoffFactor()
+		log.Warn().
+			Int("backoff_factor", newBackoff).
+			Dur("new_interval", m.Cfg.PollInterval*time.Duration(newBackoff)).
+			Msg("Increasing backoff factor")
+	}
+}
+
+func (m *Monitor) handleFetchSuccess(telemetryData []octopus.TelemetryData) {
 	if m.getDegradedMode() {
-		m.setDegradedMode(false)
-		m.setBackoffFactor(1)
-		m.SendSlackInfo("Octopus API", "Recovered from degraded mode - resuming normal polling")
-		log.Info().Msg("Exiting degraded mode - resuming normal polling interval")
+		m.exitDegradedMode()
 	}
 
 	m.resetConsecutiveErr()
-	m.LastPollTime = end
+	m.LastPollTime = m.Clock.Now()
 
 	if len(telemetryData) == 0 {
 		log.Info().Msg("No new telemetry data available")
@@ -262,27 +301,31 @@ func (m *Monitor) poll() {
 
 	log.Info().Int("count", len(telemetryData)).Msg("Retrieved telemetry data")
 
-	// Check InfluxDB health
+	m.processData(telemetryData)
+}
+
+func (m *Monitor) exitDegradedMode() {
+	m.setDegradedMode(false)
+	m.setBackoffFactor(1)
+	m.SendSlackInfo("Octopus API", "Recovered from degraded mode - resuming normal polling")
+	log.Info().Msg("Exiting degraded mode - resuming normal polling interval")
+}
+
+func (m *Monitor) processData(telemetryData []octopus.TelemetryData) {
+	ctx := context.Background()
 	m.checkInfluxHealth(ctx)
 
-	// Process data
 	if m.getInfluxHealthy() {
-		// Try to write to InfluxDB
 		if err := m.writeToInflux(telemetryData); err != nil {
 			log.Error().Err(err).Msg("Failed to write to InfluxDB")
 			m.setInfluxHealthy(false)
 			m.SendSlackError("InfluxDB", fmt.Sprintf("Failed to write data: %v. Switching to cache mode.", sanitizeError(err)))
-
-			// Cache the data instead
 			m.cacheData(telemetryData)
 		} else {
 			log.Info().Int("count", len(telemetryData)).Msg("Successfully wrote data points to InfluxDB")
 		}
 	} else {
-		// InfluxDB is down, cache the data
 		m.cacheData(telemetryData)
-
-		// Periodically try to reconnect
 		m.tryReconnectInflux(ctx)
 	}
 }
