@@ -273,8 +273,13 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start
 		}
 
 		if err := c.client.Run(ctx, req, &resp); err != nil {
+			fmt.Printf("ERROR: Octopus API request failed: %v\n", err)
 			return fmt.Errorf("failed to get telemetry: %w", err)
 		}
+
+		// Log response details
+		fmt.Printf("INFO: Octopus API response: data_points=%d\n",
+			len(resp.SmartMeterTelemetry))
 
 		telemetry = make([]TelemetryData, 0, len(resp.SmartMeterTelemetry))
 		for _, data := range resp.SmartMeterTelemetry {
@@ -308,6 +313,11 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start
 				CostDelta:        costDelta,
 				Consumption:      consumption,
 			})
+		}
+
+		if len(telemetry) == 0 {
+			fmt.Printf("WARNING: Octopus API returned no data points for device %s, time range %s to %s\n",
+				guid, start.Format(time.RFC3339), end.Format(time.RFC3339))
 		}
 
 		return nil
