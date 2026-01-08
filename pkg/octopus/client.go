@@ -198,7 +198,7 @@ func (c *Client) GetMeterGUID(ctx context.Context) error {
 func (c *Client) GetTelemetry(ctx context.Context, start, end time.Time) ([]TelemetryData, error) {
 	// Ensure token is valid and meter GUID is set
 	if err := c.ensureValidToken(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
 	}
 
 	c.mu.RLock()
@@ -207,7 +207,7 @@ func (c *Client) GetTelemetry(ctx context.Context, start, end time.Time) ([]Tele
 
 	if guid == "" {
 		if err := c.GetMeterGUID(ctx); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to get meter GUID: %w", err)
 		}
 		c.mu.RLock()
 		guid = c.meterGUID
@@ -220,7 +220,7 @@ func (c *Client) GetTelemetry(ctx context.Context, start, end time.Time) ([]Tele
 	})
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("circuit breaker error: %w", err)
 	}
 
 	data, ok := result.([]TelemetryData)
