@@ -213,12 +213,16 @@ Build and run:
 ```bash
 # Build for current platform
 make docker-build
-docker run -d --name octopus-monitor --env-file .env octopus-monitor:latest
+
+# Run with auto-restart policy (recommended)
+make docker-run
 
 # Or using docker directly
 docker build -t octopus-monitor .
-docker run -d --name octopus-monitor --env-file .env octopus-monitor
+docker run -d --name octopus-monitor --restart unless-stopped --env-file .env -v ./cache:/root/cache octopus-monitor
 ```
+
+**Note:** The `make docker-run` command includes `--restart unless-stopped` to ensure the container automatically restarts after server reboots, and mounts the cache volume for data persistence.
 
 For multi-platform builds (AMD64, ARM64, ARMv7):
 
@@ -378,6 +382,19 @@ When InfluxDB is unavailable:
 5. Cache is cleared after successful sync
 
 The cache system ensures **no data loss** during InfluxDB outages.
+
+## Recent Updates
+
+### January 2026 - API Compatibility Fix
+Fixed an issue where the Octopus Energy API was returning telemetry data as strings instead of numeric values. The application now correctly handles both string and numeric responses from the API, ensuring compatibility with all API response formats.
+
+**Changes:**
+- Updated telemetry parsing to handle string values for numeric fields
+- Added automatic string-to-float conversion for consumptionDelta, demand, costDelta, and consumption fields
+- Improved robustness for API response format variations
+
+### Docker Auto-Restart Policy
+Updated the `make docker-run` command to include `--restart unless-stopped` flag, ensuring the container automatically starts after server reboots. The cache volume is also mounted for data persistence.
 
 ## Troubleshooting
 
