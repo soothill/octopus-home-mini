@@ -15,7 +15,7 @@ func TestNewNotifier(t *testing.T) {
 		t.Fatal("NewNotifier() returned nil")
 	}
 
-	if notifier.webhookURL != webhookURL {
+	if notifier.webhookURL != webhookURL { //nolint:staticcheck // Safe access - we just verified notifier is not nil
 		t.Errorf("webhookURL = %v, want %v", notifier.webhookURL, webhookURL)
 	}
 

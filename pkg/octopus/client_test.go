@@ -16,7 +16,7 @@ func TestNewClient(t *testing.T) {
 		t.Fatal("NewClient() returned nil")
 	}
 
-	if client.apiKey != apiKey {
+	if client.apiKey != apiKey { //nolint:staticcheck // Safe access - we just verified client is not nil
 		t.Errorf("apiKey = %v, want %v", client.apiKey, apiKey)
 	}
 
@@ -309,7 +309,7 @@ func TestClient_BackoffConfiguration(t *testing.T) {
 		t.Fatal("newBackoff() returned nil")
 	}
 
-	if b.MaxElapsedTime != maxElapsedTime {
+	if b.MaxElapsedTime != maxElapsedTime { //nolint:staticcheck // Safe access - we just verified b is not nil
 		t.Errorf("MaxElapsedTime = %v, want %v", b.MaxElapsedTime, maxElapsedTime)
 	}
 }

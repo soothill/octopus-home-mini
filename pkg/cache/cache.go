@@ -20,9 +20,9 @@ type DataPoint struct {
 
 // Cache handles local storage of data points when InfluxDB is unavailable
 type Cache struct {
-	cacheDir string
-	mu       sync.Mutex
 	data     []DataPoint
+	mu       sync.Mutex
+	cacheDir string
 }
 
 // NewCache creates a new cache instance

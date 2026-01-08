@@ -19,14 +19,14 @@ type ErrorHandler func(err error)
 // Client handles writing data to InfluxDB
 type Client struct {
 	client         influxdb2.Client
+	circuitBreaker *gobreaker.CircuitBreaker
+	errorHandler   ErrorHandler
 	writeAPI       api.WriteAPI
+	stopChan       chan struct{}
+	wg             sync.WaitGroup // Tracks the error monitoring goroutine
 	bucket         string
 	org            string
 	measurement    string
-	errorHandler   ErrorHandler
-	stopChan       chan struct{}
-	circuitBreaker *gobreaker.CircuitBreaker
-	wg             sync.WaitGroup // Tracks the error monitoring goroutine
 }
 
 // DataPoint represents a single energy measurement

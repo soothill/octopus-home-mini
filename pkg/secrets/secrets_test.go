@@ -76,7 +76,7 @@ func TestFileProvider_NewFile(t *testing.T) {
 		t.Fatal("NewFileProvider() returned nil provider")
 	}
 
-	if provider.filePath != filePath {
+	if provider.filePath != filePath { //nolint:staticcheck // Safe access - we just verified provider is not nil
 		t.Errorf("filePath = %v, want %v", provider.filePath, filePath)
 	}
 }

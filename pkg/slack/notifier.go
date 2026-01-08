@@ -13,10 +13,9 @@ import (
 
 // Notifier handles sending alerts to Slack
 type Notifier struct {
-	webhookURL string
-	// HTTP client and circuit breaker (pointers)
 	httpClient     *http.Client
 	circuitBreaker *gobreaker.CircuitBreaker
+	webhookURL     string
 }
 
 // Message represents a Slack message payload
@@ -27,12 +26,12 @@ type Message struct {
 
 // Attachment represents a Slack message attachment
 type Attachment struct {
+	Fields []Field `json:"fields,omitempty"`
 	Color  string  `json:"color,omitempty"`
 	Title  string  `json:"title,omitempty"`
 	Text   string  `json:"text,omitempty"`
 	Footer string  `json:"footer,omitempty"`
 	TS     int64   `json:"ts,omitempty"`
-	Fields []Field `json:"fields,omitempty"`
 }
 
 // Field represents a field in a Slack attachment

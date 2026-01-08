@@ -37,30 +37,6 @@ var (
 
 // Config holds all application configuration
 type Config struct {
-	// Slack (optional)
-	SlackEnabled    bool   `yaml:"slack_enabled"`
-	SlackWebhookURL string `yaml:"slack_webhook_url"`
-
-	// Cache cleanup settings
-	CacheCleanupEnabled  bool          `yaml:"cache_cleanup_enabled"`
-	CacheCleanupInterval time.Duration `yaml:"cache_cleanup_interval_hours"`
-	CacheRetentionDays   int           `yaml:"cache_retention_days"`
-
-	// Timeout configurations
-	InfluxConnectTimeout      time.Duration `yaml:"influx_connect_timeout_seconds"`
-	InfluxWriteTimeout        time.Duration `yaml:"influx_write_timeout_seconds"`
-	PollTimeout               time.Duration `yaml:"poll_timeout_seconds"`
-	ShutdownTimeout           time.Duration `yaml:"shutdown_timeout_seconds"`
-	CacheSyncTimeout          time.Duration `yaml:"cache_sync_timeout_seconds"`
-	ReconnectMaxElapsedTime   time.Duration `yaml:"reconnect_max_elapsed_seconds"`
-
-	// Application settings
-	PollInterval time.Duration `yaml:"poll_interval_seconds"`
-
-	// Threshold and factor settings
-	ConsecutiveErrorThreshold int `yaml:"consecutive_error_threshold"`
-	MaxBackoffFactor          int `yaml:"max_backoff_factor"`
-
 	// Octopus Energy API
 	OctopusAPIKey        string `yaml:"octopus_api_key"`
 	OctopusAccountNumber string `yaml:"octopus_account_number"`
@@ -76,6 +52,28 @@ type Config struct {
 	CacheDir         string `yaml:"cache_dir"`
 	LogLevel         string `yaml:"log_level"`
 	HealthServerAddr string `yaml:"health_server_addr"`
+
+	// Slack (optional)
+	SlackWebhookURL string `yaml:"slack_webhook_url"`
+
+	// Application settings
+	PollInterval            time.Duration `yaml:"poll_interval_seconds"`
+	CacheCleanupInterval    time.Duration `yaml:"cache_cleanup_interval_hours"`
+	InfluxConnectTimeout    time.Duration `yaml:"influx_connect_timeout_seconds"`
+	InfluxWriteTimeout      time.Duration `yaml:"influx_write_timeout_seconds"`
+	PollTimeout             time.Duration `yaml:"poll_timeout_seconds"`
+	ShutdownTimeout         time.Duration `yaml:"shutdown_timeout_seconds"`
+	CacheSyncTimeout        time.Duration `yaml:"cache_sync_timeout_seconds"`
+	ReconnectMaxElapsedTime time.Duration `yaml:"reconnect_max_elapsed_seconds"`
+
+	// Threshold and factor settings
+	ConsecutiveErrorThreshold int `yaml:"consecutive_error_threshold"`
+	MaxBackoffFactor          int `yaml:"max_backoff_factor"`
+	CacheRetentionDays        int `yaml:"cache_retention_days"`
+
+	// Boolean flags
+	SlackEnabled        bool `yaml:"slack_enabled"`
+	CacheCleanupEnabled bool `yaml:"cache_cleanup_enabled"`
 }
 
 // Load reads configuration from a YAML file and overrides with environment variables

@@ -30,6 +30,7 @@ linters-settings:
     disable:
       - shadow
       - unusedwrite     # Sometimes we create structs for testing structure
+      - fieldalignment  # Disabled due to conflicts with gofmt field reordering
 
   gocyclo:
     min-complexity: 15

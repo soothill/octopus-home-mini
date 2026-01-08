@@ -14,10 +14,10 @@ func TestNewServer(t *testing.T) {
 	server := NewServer(":8080", "1.0.0")
 
 	if server == nil {
-		t.Fatal("NewServer returned nil")
+		t.Fatal("NewServer() returned nil")
 	}
 
-	if server.addr != ":8080" {
+	if server.addr != ":8080" { //nolint:staticcheck // Safe access - we just verified server is not nil
 		t.Errorf("addr = %v, want :8080", server.addr)
 	}
 

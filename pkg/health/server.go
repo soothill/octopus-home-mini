@@ -27,17 +27,17 @@ type ComponentHealth struct {
 
 // HealthResponse represents the overall health response
 type HealthResponse struct {
+	Components map[string]ComponentHealth `json:"components,omitempty"`
 	Status     Status                     `json:"status"`
 	Timestamp  string                     `json:"timestamp"`
 	Version    string                     `json:"version,omitempty"`
-	Components map[string]ComponentHealth `json:"components,omitempty"`
 }
 
 // ReadinessResponse represents the readiness check response
 type ReadinessResponse struct {
-	Ready      bool                       `json:"ready"`
-	Timestamp  string                     `json:"timestamp"`
 	Components map[string]ComponentHealth `json:"components"`
+	Timestamp  string                     `json:"timestamp"`
+	Ready      bool                       `json:"ready"`
 }
 
 // Checker is a function that checks the health of a component
@@ -45,11 +45,11 @@ type Checker func(ctx context.Context) ComponentHealth
 
 // Server provides health check endpoints
 type Server struct {
-	addr     string
 	server   *http.Server
-	version  string
 	checkers map[string]Checker
 	mu       sync.RWMutex
+	addr     string
+	version  string
 }
 
 // NewServer creates a new health check server

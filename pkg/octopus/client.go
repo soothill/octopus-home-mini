@@ -19,12 +19,12 @@ const (
 
 // Client handles communication with the Octopus Energy GraphQL API
 type Client struct {
+	client         *graphql.Client
+	circuitBreaker *gobreaker.CircuitBreaker
 	apiKey         string
 	accountNumber  string
 	token          string
-	client         *graphql.Client
 	meterGUID      string
-	circuitBreaker *gobreaker.CircuitBreaker
 }
 
 // TelemetryData represents energy consumption data

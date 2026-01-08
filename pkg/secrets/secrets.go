@@ -37,9 +37,9 @@ const (
 
 // Config holds configuration for secret providers
 type Config struct {
-	Type ProviderType
 	// Additional provider-specific configuration
 	Options map[string]string
+	Type    ProviderType
 }
 
 // NewProvider creates a new secret provider based on configuration
@@ -135,9 +135,9 @@ func (p *EnvProvider) Close() error {
 
 // FileProvider retrieves secrets from .env files
 type FileProvider struct {
-	filePath string
-	secrets  map[string]string
 	mu       sync.RWMutex
+	secrets  map[string]string
+	filePath string
 }
 
 // NewFileProvider creates a new file-based provider
