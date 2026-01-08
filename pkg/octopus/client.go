@@ -283,12 +283,12 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start
 
 		telemetry = make([]TelemetryData, 0, len(resp.SmartMeterTelemetry))
 		skippedCount := 0
-		
+
 		for i, data := range resp.SmartMeterTelemetry {
 			readAt, err := time.Parse(time.RFC3339, data.ReadAt)
 			if err != nil {
 				skippedCount++
-				fmt.Printf("ERROR: Failed to parse timestamp for data point %d: %v (raw='%s')\n", 
+				fmt.Printf("ERROR: Failed to parse timestamp for data point %d: %v (raw='%s')\n",
 					i, err, data.ReadAt)
 				continue // Skip invalid timestamps
 			}
@@ -298,19 +298,19 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start
 			consumptionDelta, err := strconv.ParseFloat(data.ConsumptionDelta, 64)
 			if err != nil {
 				skippedCount++
-				fmt.Printf("ERROR: Failed to parse consumptionDelta for data point %d: %v (raw='%s')\n", 
+				fmt.Printf("ERROR: Failed to parse consumptionDelta for data point %d: %v (raw='%s')\n",
 					i, err, data.ConsumptionDelta)
 				continue // Skip invalid data
 			}
-			
+
 			demand, err := strconv.ParseFloat(data.Demand, 64)
 			if err != nil {
 				skippedCount++
-				fmt.Printf("ERROR: Failed to parse demand for data point %d: %v (raw='%s')\n", 
+				fmt.Printf("ERROR: Failed to parse demand for data point %d: %v (raw='%s')\n",
 					i, err, data.Demand)
 				continue // Skip invalid data
 			}
-			
+
 			// costDelta may be empty (not available from API), treat as 0
 			costDelta := 0.0
 			if data.CostDelta != "" {
@@ -319,11 +319,11 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start
 				}
 				// Silently ignore parse errors for costDelta as it may not be available
 			}
-			
+
 			consumption, err := strconv.ParseFloat(data.Consumption, 64)
 			if err != nil {
 				skippedCount++
-				fmt.Printf("ERROR: Failed to parse consumption for data point %d: %v (raw='%s')\n", 
+				fmt.Printf("ERROR: Failed to parse consumption for data point %d: %v (raw='%s')\n",
 					i, err, data.Consumption)
 				continue // Skip invalid data
 			}
@@ -337,7 +337,7 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start
 			})
 		}
 
-		fmt.Printf("INFO: Successfully parsed %d data points, skipped %d\n", 
+		fmt.Printf("INFO: Successfully parsed %d data points, skipped %d\n",
 			len(telemetry), skippedCount)
 
 		if len(telemetry) == 0 {
