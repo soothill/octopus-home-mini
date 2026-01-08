@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -12,12 +13,13 @@ import (
 )
 
 const (
-	graphqlEndpoint = "https://api.octopus.energy/v1/graphql/"
-	maxRetries      = 3
-	maxElapsedTime  = 30 * time.Second
+	graphqlEndpoint       = "https://api.octopus.energy/v1/graphql/"
+	maxRetries            = 3
+	maxElapsedTime        = 30 * time.Second
+	tokenValidityDuration = 1 * time.Hour // Tokens are valid for 1 hour
 )
 
-// Client handles communication with the Octopus Energy GraphQL API
+// Client handles communication with Octopus Energy GraphQL API
 type Client struct {
 	client         *graphql.Client
 	circuitBreaker *gobreaker.CircuitBreaker
@@ -25,6 +27,8 @@ type Client struct {
 	accountNumber  string
 	token          string
 	meterGUID      string
+	tokenExpiry    time.Time    // Track when token will expire
+	mu             sync.RWMutex // Protect token and expiry fields
 }
 
 // TelemetryData represents energy consumption data
@@ -74,7 +78,7 @@ func newBackoff() *backoff.ExponentialBackOff {
 	return b
 }
 
-// Authenticate obtains a JWT token from the API with exponential backoff retry
+// Authenticate obtains a JWT token from API with exponential backoff retry
 func (c *Client) Authenticate(ctx context.Context) error {
 	operation := func() error {
 		req := graphql.NewRequest(`
@@ -97,7 +101,12 @@ func (c *Client) Authenticate(ctx context.Context) error {
 			return fmt.Errorf("failed to authenticate: %w", err)
 		}
 
+		c.mu.Lock()
 		c.token = resp.ObtainKrakenToken.Token
+		// Set token expiry - tokens typically last 1 hour
+		c.tokenExpiry = time.Now().Add(tokenValidityDuration)
+		c.mu.Unlock()
+
 		return nil
 	}
 
@@ -105,8 +114,25 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	return backoff.Retry(operation, backoff.WithContext(b, ctx))
 }
 
-// GetMeterGUID retrieves the meter GUID for the account with exponential backoff retry
+// ensureValidToken checks if current token is valid and re-authenticates if needed
+func (c *Client) ensureValidToken(ctx context.Context) error {
+	c.mu.Lock()
+	needsRefresh := c.token == "" || time.Now().After(c.tokenExpiry)
+	c.mu.Unlock()
+
+	if needsRefresh {
+		return c.Authenticate(ctx)
+	}
+	return nil
+}
+
+// GetMeterGUID retrieves meter GUID for account with exponential backoff retry
 func (c *Client) GetMeterGUID(ctx context.Context) error {
+	// Ensure token is valid before making request
+	if err := c.ensureValidToken(ctx); err != nil {
+		return err
+	}
+
 	operation := func() error {
 		req := graphql.NewRequest(`
 			query getAccount($accountNumber: String!) {
@@ -125,7 +151,12 @@ func (c *Client) GetMeterGUID(ctx context.Context) error {
 		`)
 
 		req.Var("accountNumber", c.accountNumber)
-		req.Header.Set("Authorization", c.token)
+
+		c.mu.RLock()
+		token := c.token
+		c.mu.RUnlock()
+
+		req.Header.Set("Authorization", token)
 
 		var resp struct {
 			Account struct {
@@ -152,7 +183,10 @@ func (c *Client) GetMeterGUID(ctx context.Context) error {
 			return backoff.Permanent(fmt.Errorf("no smart devices found for account"))
 		}
 
+		c.mu.Lock()
 		c.meterGUID = resp.Account.ElectricityAgreements[0].MeterPoint.Meters[0].SmartDevices[0].DeviceID
+		c.mu.Unlock()
+
 		return nil
 	}
 
@@ -162,21 +196,27 @@ func (c *Client) GetMeterGUID(ctx context.Context) error {
 
 // GetTelemetry retrieves smart meter telemetry data with exponential backoff retry and circuit breaker
 func (c *Client) GetTelemetry(ctx context.Context, start, end time.Time) ([]TelemetryData, error) {
-	if c.token == "" {
-		if err := c.Authenticate(ctx); err != nil {
-			return nil, err
-		}
+	// Ensure token is valid and meter GUID is set
+	if err := c.ensureValidToken(ctx); err != nil {
+		return nil, err
 	}
 
-	if c.meterGUID == "" {
+	c.mu.RLock()
+	guid := c.meterGUID
+	c.mu.RUnlock()
+
+	if guid == "" {
 		if err := c.GetMeterGUID(ctx); err != nil {
 			return nil, err
 		}
+		c.mu.RLock()
+		guid = c.meterGUID
+		c.mu.RUnlock()
 	}
 
-	// Wrap the operation in circuit breaker
+	// Wrap operation in circuit breaker
 	result, err := c.circuitBreaker.Execute(func() (interface{}, error) {
-		return c.fetchTelemetryWithRetry(ctx, start, end)
+		return c.fetchTelemetryWithRetry(ctx, guid, start, end)
 	})
 
 	if err != nil {
@@ -190,8 +230,8 @@ func (c *Client) GetTelemetry(ctx context.Context, start, end time.Time) ([]Tele
 	return data, nil
 }
 
-// fetchTelemetryWithRetry performs the actual telemetry fetch with retry logic
-func (c *Client) fetchTelemetryWithRetry(ctx context.Context, start, end time.Time) ([]TelemetryData, error) {
+// fetchTelemetryWithRetry performs actual telemetry fetch with retry logic
+func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start, end time.Time) ([]TelemetryData, error) {
 	var telemetry []TelemetryData
 
 	operation := func() error {
@@ -212,10 +252,15 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, start, end time.Ti
 			}
 		`)
 
-		req.Var("deviceId", c.meterGUID)
+		req.Var("deviceId", guid)
 		req.Var("start", start.Format(time.RFC3339))
 		req.Var("end", end.Format(time.RFC3339))
-		req.Header.Set("Authorization", c.token)
+
+		c.mu.RLock()
+		token := c.token
+		c.mu.RUnlock()
+
+		req.Header.Set("Authorization", token)
 
 		var resp struct {
 			SmartMeterTelemetry []struct {
@@ -276,7 +321,7 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, start, end time.Ti
 	return telemetry, nil
 }
 
-// Initialize performs authentication and retrieves the meter GUID
+// Initialize performs authentication and retrieves meter GUID
 func (c *Client) Initialize(ctx context.Context) error {
 	if err := c.Authenticate(ctx); err != nil {
 		return err
