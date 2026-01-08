@@ -219,11 +219,11 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, start, end time.Ti
 
 		var resp struct {
 			SmartMeterTelemetry []struct {
-				ReadAt           string  `json:"readAt"`
-				ConsumptionDelta string  `json:"consumptionDelta"`
-				Demand           string  `json:"demand"`
-				CostDelta        string  `json:"costDelta"`
-				Consumption      string  `json:"consumption"`
+				ReadAt           string `json:"readAt"`
+				ConsumptionDelta string `json:"consumptionDelta"`
+				Demand           string `json:"demand"`
+				CostDelta        string `json:"costDelta"`
+				Consumption      string `json:"consumption"`
 			} `json:"smartMeterTelemetry"`
 		}
 
@@ -239,10 +239,22 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, start, end time.Ti
 			}
 
 			// Parse string values to float64
-			consumptionDelta, _ := strconv.ParseFloat(data.ConsumptionDelta, 64)
-			demand, _ := strconv.ParseFloat(data.Demand, 64)
-			costDelta, _ := strconv.ParseFloat(data.CostDelta, 64)
-			consumption, _ := strconv.ParseFloat(data.Consumption, 64)
+			consumptionDelta, err := strconv.ParseFloat(data.ConsumptionDelta, 64)
+			if err != nil {
+				continue // Skip invalid data
+			}
+			demand, err := strconv.ParseFloat(data.Demand, 64)
+			if err != nil {
+				continue // Skip invalid data
+			}
+			costDelta, err := strconv.ParseFloat(data.CostDelta, 64)
+			if err != nil {
+				continue // Skip invalid data
+			}
+			consumption, err := strconv.ParseFloat(data.Consumption, 64)
+			if err != nil {
+				continue // Skip invalid data
+			}
 
 			telemetry = append(telemetry, TelemetryData{
 				ReadAt:           readAt,

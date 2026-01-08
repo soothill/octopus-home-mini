@@ -39,9 +39,9 @@ func (c *MockOctopusClient) Initialize(ctx context.Context) error {
 
 func TestPoll_FetchError(t *testing.T) {
 	cfg := &config.Config{
-		PollInterval:            1 * time.Minute,
+		PollInterval:              1 * time.Minute,
 		ConsecutiveErrorThreshold: 3,
-		MaxBackoffFactor:        5,
+		MaxBackoffFactor:          5,
 	}
 	mockClock := &MockClock{now: time.Now()}
 	mockOctopusClient := &MockOctopusClient{
