@@ -37,6 +37,30 @@ var (
 
 // Config holds all application configuration
 type Config struct {
+	// Slack (optional)
+	SlackEnabled    bool   `yaml:"slack_enabled"`
+	SlackWebhookURL string `yaml:"slack_webhook_url"`
+
+	// Cache cleanup settings
+	CacheCleanupEnabled  bool          `yaml:"cache_cleanup_enabled"`
+	CacheCleanupInterval time.Duration `yaml:"cache_cleanup_interval_hours"`
+	CacheRetentionDays   int           `yaml:"cache_retention_days"`
+
+	// Timeout configurations
+	InfluxConnectTimeout      time.Duration `yaml:"influx_connect_timeout_seconds"`
+	InfluxWriteTimeout        time.Duration `yaml:"influx_write_timeout_seconds"`
+	PollTimeout               time.Duration `yaml:"poll_timeout_seconds"`
+	ShutdownTimeout           time.Duration `yaml:"shutdown_timeout_seconds"`
+	CacheSyncTimeout          time.Duration `yaml:"cache_sync_timeout_seconds"`
+	ReconnectMaxElapsedTime   time.Duration `yaml:"reconnect_max_elapsed_seconds"`
+
+	// Application settings
+	PollInterval time.Duration `yaml:"poll_interval_seconds"`
+
+	// Threshold and factor settings
+	ConsecutiveErrorThreshold int `yaml:"consecutive_error_threshold"`
+	MaxBackoffFactor          int `yaml:"max_backoff_factor"`
+
 	// Octopus Energy API
 	OctopusAPIKey        string `yaml:"octopus_api_key"`
 	OctopusAccountNumber string `yaml:"octopus_account_number"`
@@ -48,31 +72,9 @@ type Config struct {
 	InfluxDBBucket      string `yaml:"influxdb_bucket"`
 	InfluxDBMeasurement string `yaml:"influxdb_measurement"`
 
-	// Slack (optional)
-	SlackWebhookURL string `yaml:"slack_webhook_url"`
-	SlackEnabled    bool   `yaml:"slack_enabled"`
-
-	// Application settings
-	PollInterval time.Duration `yaml:"poll_interval_seconds"`
-	CacheDir     string        `yaml:"cache_dir"`
-	LogLevel     string        `yaml:"log_level"`
-
-	// Timeout configurations
-	InfluxConnectTimeout      time.Duration `yaml:"influx_connect_timeout_seconds"`
-	InfluxWriteTimeout        time.Duration `yaml:"influx_write_timeout_seconds"`
-	PollTimeout               time.Duration `yaml:"poll_timeout_seconds"`
-	ShutdownTimeout           time.Duration `yaml:"shutdown_timeout_seconds"`
-	CacheSyncTimeout          time.Duration `yaml:"cache_sync_timeout_seconds"`
-	ReconnectMaxElapsedTime   time.Duration `yaml:"reconnect_max_elapsed_seconds"`
-	ConsecutiveErrorThreshold int           `yaml:"consecutive_error_threshold"`
-	MaxBackoffFactor          int           `yaml:"max_backoff_factor"`
-
-	// Cache cleanup settings
-	CacheCleanupEnabled  bool          `yaml:"cache_cleanup_enabled"`
-	CacheCleanupInterval time.Duration `yaml:"cache_cleanup_interval_hours"`
-	CacheRetentionDays   int           `yaml:"cache_retention_days"`
-
-	// Health server settings
+	// Cache directory and log level
+	CacheDir         string `yaml:"cache_dir"`
+	LogLevel         string `yaml:"log_level"`
 	HealthServerAddr string `yaml:"health_server_addr"`
 }
 
@@ -137,12 +139,26 @@ func defaultConfig() *Config {
 
 // overrideWithEnv overrides config fields with values from environment variables if they are set
 func overrideWithEnv(cfg *Config) {
+	overrideOctopusEnv(cfg)
+	overrideInfluxDBEnv(cfg)
+	overrideSlackEnv(cfg)
+	overrideAppEnv(cfg)
+	overrideTimeoutEnv(cfg)
+	overrideCacheEnv(cfg)
+}
+
+// overrideOctopusEnv overrides Octopus API configuration from environment
+func overrideOctopusEnv(cfg *Config) {
 	if val := getEnv("OCTOPUS_API_KEY", ""); val != "" {
 		cfg.OctopusAPIKey = strings.TrimSpace(val)
 	}
 	if val := getEnv("OCTOPUS_ACCOUNT_NUMBER", ""); val != "" {
 		cfg.OctopusAccountNumber = strings.TrimSpace(val)
 	}
+}
+
+// overrideInfluxDBEnv overrides InfluxDB configuration from environment
+func overrideInfluxDBEnv(cfg *Config) {
 	if val := getEnv("INFLUXDB_URL", ""); val != "" {
 		cfg.InfluxDBURL = strings.TrimSpace(val)
 	}
@@ -158,12 +174,20 @@ func overrideWithEnv(cfg *Config) {
 	if val := getEnv("INFLUXDB_MEASUREMENT", ""); val != "" {
 		cfg.InfluxDBMeasurement = strings.TrimSpace(val)
 	}
+}
+
+// overrideSlackEnv overrides Slack configuration from environment
+func overrideSlackEnv(cfg *Config) {
 	if val := getEnv("SLACK_WEBHOOK_URL", ""); val != "" {
 		cfg.SlackWebhookURL = strings.TrimSpace(val)
 	}
 	if val, isSet := getEnvAsBoolPtr("SLACK_ENABLED"); isSet {
 		cfg.SlackEnabled = *val
 	}
+}
+
+// overrideAppEnv overrides application settings from environment
+func overrideAppEnv(cfg *Config) {
 	if val, isSet := getEnvAsIntPtr("POLL_INTERVAL_SECONDS"); isSet {
 		cfg.PollInterval = time.Duration(*val) * time.Second
 	}
@@ -173,6 +197,13 @@ func overrideWithEnv(cfg *Config) {
 	if val := getEnv("LOG_LEVEL", ""); val != "" {
 		cfg.LogLevel = val
 	}
+	if val := getEnv("HEALTH_SERVER_ADDR", ""); val != "" {
+		cfg.HealthServerAddr = val
+	}
+}
+
+// overrideTimeoutEnv overrides timeout configuration from environment
+func overrideTimeoutEnv(cfg *Config) {
 	if val, isSet := getEnvAsIntPtr("INFLUX_CONNECT_TIMEOUT_SECONDS"); isSet {
 		cfg.InfluxConnectTimeout = time.Duration(*val) * time.Second
 	}
@@ -197,6 +228,10 @@ func overrideWithEnv(cfg *Config) {
 	if val, isSet := getEnvAsIntPtr("MAX_BACKOFF_FACTOR"); isSet {
 		cfg.MaxBackoffFactor = *val
 	}
+}
+
+// overrideCacheEnv overrides cache configuration from environment
+func overrideCacheEnv(cfg *Config) {
 	if val, isSet := getEnvAsBoolPtr("CACHE_CLEANUP_ENABLED"); isSet {
 		cfg.CacheCleanupEnabled = *val
 	}
@@ -206,14 +241,36 @@ func overrideWithEnv(cfg *Config) {
 	if val, isSet := getEnvAsIntPtr("CACHE_RETENTION_DAYS"); isSet {
 		cfg.CacheRetentionDays = *val
 	}
-	if val := getEnv("HEALTH_SERVER_ADDR", ""); val != "" {
-		cfg.HealthServerAddr = val
-	}
 }
 
 // Validate checks if required configuration values are present and valid
 func (c *Config) Validate() error {
-	// Validate Octopus API credentials
+	if err := c.validateOctopusCredentials(); err != nil {
+		return err
+	}
+	if err := c.validateInfluxDBConfig(); err != nil {
+		return err
+	}
+	if err := c.validateSlackConfig(); err != nil {
+		return err
+	}
+	if err := c.validatePollInterval(); err != nil {
+		return err
+	}
+	if err := c.validateCacheDirectoryConfig(); err != nil {
+		return err
+	}
+	if err := c.validateLogLevel(); err != nil {
+		return err
+	}
+	if err := c.validateTimeoutConfig(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateOctopusCredentials validates Octopus Energy API credentials
+func (c *Config) validateOctopusCredentials() error {
 	if c.OctopusAPIKey == "" {
 		return fmt.Errorf("OCTOPUS_API_KEY is required")
 	}
@@ -223,12 +280,14 @@ func (c *Config) Validate() error {
 	if c.OctopusAccountNumber == "" {
 		return fmt.Errorf("OCTOPUS_ACCOUNT_NUMBER is required")
 	}
-	// Account number should be alphanumeric (A-12345678 format)
 	if len(c.OctopusAccountNumber) < 2 {
 		return fmt.Errorf("OCTOPUS_ACCOUNT_NUMBER format is invalid")
 	}
+	return nil
+}
 
-	// Validate InfluxDB configuration
+// validateInfluxDBConfig validates InfluxDB configuration
+func (c *Config) validateInfluxDBConfig() error {
 	if c.InfluxDBURL == "" {
 		return fmt.Errorf("INFLUXDB_URL is required")
 	}
@@ -253,44 +312,59 @@ func (c *Config) Validate() error {
 	if !validNameRegex.MatchString(c.InfluxDBMeasurement) {
 		return fmt.Errorf("INFLUXDB_MEASUREMENT must contain only alphanumeric characters, underscores, and hyphens")
 	}
+	return nil
+}
 
-	// Validate Slack webhook URL if enabled
-	if c.SlackEnabled {
-		if err := validateURL(c.SlackWebhookURL, "SLACK_WEBHOOK_URL"); err != nil {
-			return err
-		}
-		// Ensure it's a hooks.slack.com URL (or example.com for testing)
-		parsedURL, err := url.Parse(c.SlackWebhookURL)
-		if err != nil {
-			return fmt.Errorf("SLACK_WEBHOOK_URL is not a valid URL: %w", err)
-		}
-		if parsedURL.Host != "hooks.slack.com" && parsedURL.Host != "example.com" {
-			return fmt.Errorf("SLACK_WEBHOOK_URL must be a hooks.slack.com URL")
-		}
+// validateSlackConfig validates Slack webhook configuration
+func (c *Config) validateSlackConfig() error {
+	if !c.SlackEnabled {
+		return nil
 	}
+	if err := validateURL(c.SlackWebhookURL, "SLACK_WEBHOOK_URL"); err != nil {
+		return err
+	}
+	parsedURL, err := url.Parse(c.SlackWebhookURL)
+	if err != nil {
+		return fmt.Errorf("SLACK_WEBHOOK_URL is not a valid URL: %w", err)
+	}
+	if parsedURL.Host != "hooks.slack.com" && parsedURL.Host != "example.com" {
+		return fmt.Errorf("SLACK_WEBHOOK_URL must be a hooks.slack.com URL")
+	}
+	return nil
+}
 
-	// Validate poll interval
+// validatePollInterval validates the poll interval range
+func (c *Config) validatePollInterval() error {
 	if c.PollInterval < minPollInterval {
 		return fmt.Errorf("POLL_INTERVAL_SECONDS must be at least %d seconds", int(minPollInterval.Seconds()))
 	}
 	if c.PollInterval > maxPollInterval {
 		return fmt.Errorf("POLL_INTERVAL_SECONDS must be at most %d seconds", int(maxPollInterval.Seconds()))
 	}
+	return nil
+}
 
-	// Validate cache directory
+// validateCacheDirectoryConfig validates cache directory configuration
+func (c *Config) validateCacheDirectoryConfig() error {
 	if c.CacheDir == "" {
 		return fmt.Errorf("CACHE_DIR is required")
 	}
 	if len(c.CacheDir) > maxPathLength {
 		return fmt.Errorf("CACHE_DIR path is too long (max %d characters)", maxPathLength)
 	}
+	return nil
+}
 
-	// Validate log level
+// validateLogLevel validates the log level value
+func (c *Config) validateLogLevel() error {
 	if !validLogLevel[c.LogLevel] {
 		return fmt.Errorf("LOG_LEVEL must be one of: debug, info, warn, error")
 	}
+	return nil
+}
 
-	// Validate timeout configurations
+// validateTimeoutConfig validates all timeout configurations
+func (c *Config) validateTimeoutConfig() error {
 	if c.InfluxConnectTimeout < 1*time.Second {
 		return fmt.Errorf("INFLUX_CONNECT_TIMEOUT_SECONDS must be at least 1 second")
 	}
@@ -318,7 +392,6 @@ func (c *Config) Validate() error {
 	if c.CacheRetentionDays < 1 {
 		return fmt.Errorf("CACHE_RETENTION_DAYS must be at least 1")
 	}
-
 	return nil
 }
 

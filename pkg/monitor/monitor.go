@@ -42,13 +42,18 @@ type OctopusClient interface {
 
 // Monitor handles the main monitoring loop
 type Monitor struct {
-	Cfg           *config.Config
+	// Clock and timing
+	Clock        Clock
+	LastPollTime time.Time
+
+	// Configuration
+	Cfg *config.Config
+
+	// External clients
 	OctopusClient OctopusClient
 	InfluxClient  *influx.Client
 	Cache         *cache.Cache
 	SlackNotifier *slack.Notifier // May be nil if Slack is disabled
-	Clock         Clock
-	LastPollTime  time.Time
 
 	// Internal state - protected by mu
 	mu    sync.RWMutex
@@ -58,8 +63,8 @@ type Monitor struct {
 // State holds the internal state of the monitor
 type State struct {
 	InfluxHealthy  bool
-	ConsecutiveErr int
 	DegradedMode   bool
+	ConsecutiveErr int
 	BackoffFactor  int
 }
 
