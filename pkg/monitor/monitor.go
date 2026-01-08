@@ -34,10 +34,16 @@ func (c *SystemClock) NewTicker(d time.Duration) *time.Ticker {
 	return time.NewTicker(d)
 }
 
+// OctopusClient defines the interface for fetching telemetry data
+type OctopusClient interface {
+	GetTelemetry(ctx context.Context, start, end time.Time) ([]octopus.TelemetryData, error)
+	Initialize(ctx context.Context) error
+}
+
 // Monitor handles the main monitoring loop
 type Monitor struct {
 	Cfg           *config.Config
-	OctopusClient *octopus.Client
+	OctopusClient OctopusClient
 	InfluxClient  *influx.Client
 	Cache         *cache.Cache
 	SlackNotifier *slack.Notifier // May be nil if Slack is disabled
@@ -57,7 +63,7 @@ type State struct {
 	BackoffFactor  int
 }
 
-func New(cfg *config.Config, octopusClient *octopus.Client, influxClient *influx.Client, cache *cache.Cache, slackNotifier *slack.Notifier) *Monitor {
+func New(cfg *config.Config, octopusClient OctopusClient, influxClient *influx.Client, cache *cache.Cache, slackNotifier *slack.Notifier) *Monitor {
 	clock := &SystemClock{}
 	return &Monitor{
 		Cfg:           cfg,
