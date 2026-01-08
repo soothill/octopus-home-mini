@@ -417,18 +417,6 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
-func getEnvAsBool(key string, defaultValue bool) bool {
-	valueStr := getEnv(key, "")
-	if valueStr == "" {
-		return defaultValue
-	}
-	value, err := strconv.ParseBool(valueStr)
-	if err != nil {
-		return defaultValue
-	}
-	return value
-}
-
 // Helper functions to get env vars as pointers to distinguish between unset and zero-value
 func getEnvAsIntPtr(key string) (*int, bool) {
 	valueStr := getEnv(key, "")

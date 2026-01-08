@@ -31,7 +31,7 @@ type Attachment struct {
 	Text   string  `json:"text,omitempty"`
 	Fields []Field `json:"fields,omitempty"`
 	Footer string  `json:"footer,omitempty"`
-	Ts     int64   `json:"ts,omitempty"`
+	TS     int64   `json:"ts,omitempty"`
 }
 
 // Field represents a field in a Slack attachment
@@ -85,7 +85,7 @@ func (n *Notifier) SendError(component, errorMsg string) error {
 					},
 				},
 				Footer: "Octopus Home Mini Monitor",
-				Ts:     time.Now().Unix(),
+				TS:     time.Now().Unix(),
 			},
 		},
 	}
@@ -114,7 +114,7 @@ func (n *Notifier) SendWarning(component, warningMsg string) error {
 					},
 				},
 				Footer: "Octopus Home Mini Monitor",
-				Ts:     time.Now().Unix(),
+				TS:     time.Now().Unix(),
 			},
 		},
 	}
@@ -138,7 +138,7 @@ func (n *Notifier) SendInfo(title, message string) error {
 					},
 				},
 				Footer: "Octopus Home Mini Monitor",
-				Ts:     time.Now().Unix(),
+				TS:     time.Now().Unix(),
 			},
 		},
 	}
@@ -172,7 +172,7 @@ func (n *Notifier) SendCacheAlert(count int, action string) error {
 					},
 				},
 				Footer: "Octopus Home Mini Monitor",
-				Ts:     time.Now().Unix(),
+				TS:     time.Now().Unix(),
 			},
 		},
 	}

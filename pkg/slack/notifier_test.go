@@ -237,7 +237,7 @@ func TestMessage_Structure(t *testing.T) {
 					},
 				},
 				Footer: "Test Footer",
-				Ts:     1234567890,
+				TS:     1234567890,
 			},
 		},
 	}

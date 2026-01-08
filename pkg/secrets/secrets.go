@@ -58,7 +58,7 @@ func NewProvider(cfg Config) (Provider, error) {
 	case ProviderTypeVault:
 		return nil, fmt.Errorf("HashiCorp Vault provider not yet implemented")
 	case ProviderTypeK8s:
-		return nil, fmt.Errorf("Kubernetes Secrets provider not yet implemented")
+		return nil, fmt.Errorf("kubernetes Secrets provider not yet implemented")
 	default:
 		return nil, fmt.Errorf("unknown provider type: %s", cfg.Type)
 	}
