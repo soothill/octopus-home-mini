@@ -163,8 +163,8 @@ docker-buildx-push:
 
 # Docker run
 docker-run:
-	@echo "Running Docker container..."
-	@docker run -d --name octopus-monitor --env-file .env octopus-monitor:latest
+	@echo "Running Docker container with auto-restart policy..."
+	@docker run -d --name octopus-monitor --restart unless-stopped --env-file .env -v ./cache:/root/cache octopus-monitor:latest
 
 # Show help
 help:

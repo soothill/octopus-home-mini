@@ -3,6 +3,7 @@ package octopus
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -219,10 +220,10 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, start, end time.Ti
 		var resp struct {
 			SmartMeterTelemetry []struct {
 				ReadAt           string  `json:"readAt"`
-				ConsumptionDelta float64 `json:"consumptionDelta"`
-				Demand           float64 `json:"demand"`
-				CostDelta        float64 `json:"costDelta"`
-				Consumption      float64 `json:"consumption"`
+				ConsumptionDelta string  `json:"consumptionDelta"`
+				Demand           string  `json:"demand"`
+				CostDelta        string  `json:"costDelta"`
+				Consumption      string  `json:"consumption"`
 			} `json:"smartMeterTelemetry"`
 		}
 
@@ -237,12 +238,18 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, start, end time.Ti
 				continue // Skip invalid timestamps
 			}
 
+			// Parse string values to float64
+			consumptionDelta, _ := strconv.ParseFloat(data.ConsumptionDelta, 64)
+			demand, _ := strconv.ParseFloat(data.Demand, 64)
+			costDelta, _ := strconv.ParseFloat(data.CostDelta, 64)
+			consumption, _ := strconv.ParseFloat(data.Consumption, 64)
+
 			telemetry = append(telemetry, TelemetryData{
 				ReadAt:           readAt,
-				ConsumptionDelta: data.ConsumptionDelta,
-				Demand:           data.Demand,
-				CostDelta:        data.CostDelta,
-				Consumption:      data.Consumption,
+				ConsumptionDelta: consumptionDelta,
+				Demand:           demand,
+				CostDelta:        costDelta,
+				Consumption:      consumption,
 			})
 		}
 
