@@ -299,7 +299,10 @@ func (m *Monitor) handleFetchSuccess(telemetryData []octopus.TelemetryData) {
 	}
 
 	m.resetConsecutiveErr()
-	m.LastPollTime = m.Clock.Now()
+	// Always update LastPollTime to the end time of the last poll
+	// This ensures we don't poll the same time range again
+	now := m.Clock.Now()
+	m.LastPollTime = now
 
 	if len(telemetryData) == 0 {
 		log.Info().Msg("No new telemetry data available")
