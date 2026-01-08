@@ -278,31 +278,53 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start
 		}
 
 		// Log response details
-		fmt.Printf("INFO: Octopus API response: data_points=%d\n",
+		fmt.Printf("INFO: Octopus API response: raw_data_points=%d\n",
 			len(resp.SmartMeterTelemetry))
 
 		telemetry = make([]TelemetryData, 0, len(resp.SmartMeterTelemetry))
-		for _, data := range resp.SmartMeterTelemetry {
+		skippedCount := 0
+		
+		for i, data := range resp.SmartMeterTelemetry {
 			readAt, err := time.Parse(time.RFC3339, data.ReadAt)
 			if err != nil {
+				skippedCount++
+				fmt.Printf("ERROR: Failed to parse timestamp for data point %d: %v (raw='%s')\n", 
+					i, err, data.ReadAt)
 				continue // Skip invalid timestamps
 			}
 
 			// Parse string values to float64
+			// Handle empty strings by treating them as 0 (no data = no value)
 			consumptionDelta, err := strconv.ParseFloat(data.ConsumptionDelta, 64)
 			if err != nil {
+				skippedCount++
+				fmt.Printf("ERROR: Failed to parse consumptionDelta for data point %d: %v (raw='%s')\n", 
+					i, err, data.ConsumptionDelta)
 				continue // Skip invalid data
 			}
+			
 			demand, err := strconv.ParseFloat(data.Demand, 64)
 			if err != nil {
+				skippedCount++
+				fmt.Printf("ERROR: Failed to parse demand for data point %d: %v (raw='%s')\n", 
+					i, err, data.Demand)
 				continue // Skip invalid data
 			}
-			costDelta, err := strconv.ParseFloat(data.CostDelta, 64)
-			if err != nil {
-				continue // Skip invalid data
+			
+			// costDelta may be empty (not available from API), treat as 0
+			costDelta := 0.0
+			if data.CostDelta != "" {
+				if parsed, err := strconv.ParseFloat(data.CostDelta, 64); err == nil {
+					costDelta = parsed
+				}
+				// Silently ignore parse errors for costDelta as it may not be available
 			}
+			
 			consumption, err := strconv.ParseFloat(data.Consumption, 64)
 			if err != nil {
+				skippedCount++
+				fmt.Printf("ERROR: Failed to parse consumption for data point %d: %v (raw='%s')\n", 
+					i, err, data.Consumption)
 				continue // Skip invalid data
 			}
 
@@ -315,9 +337,12 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start
 			})
 		}
 
+		fmt.Printf("INFO: Successfully parsed %d data points, skipped %d\n", 
+			len(telemetry), skippedCount)
+
 		if len(telemetry) == 0 {
-			fmt.Printf("WARNING: Octopus API returned no data points for device %s, time range %s to %s\n",
-				guid, start.Format(time.RFC3339), end.Format(time.RFC3339))
+			fmt.Printf("ERROR: No valid data points after parsing for device %s, time range %s to %s (skipped %d of %d raw points)\n",
+				guid, start.Format(time.RFC3339), end.Format(time.RFC3339), skippedCount, len(resp.SmartMeterTelemetry))
 		}
 
 		return nil
