@@ -6,6 +6,8 @@ A Go application that pulls usage data from an Octopus Energy Home Mini device a
 
 ### Core Functionality
 - **Real-time Data Collection**: Pulls energy consumption data from Octopus Home Mini every 30 seconds (configurable)
+- **Telemetry Resolution**: 10-second data resolution via Octopus API grouping
+- **Historical Range Support (client)**: The Octopus API client supports fetching arbitrary time windows via start and end timestamps; the monitor polls only the most recent window and does not automatically request historical backfill from the API
 - **InfluxDB Integration**: Stores energy metrics in InfluxDB for long-term analysis and visualization
 - **Slack Notifications**: Sends alerts on failures, warnings, and important events
 - **Local Caching**: Automatically caches data locally when InfluxDB is unavailable
@@ -44,7 +46,7 @@ The application consists of several key components:
 - **Slack Notifier** ([pkg/slack/notifier.go](pkg/slack/notifier.go)): Sends formatted alerts to Slack with retry logic and circuit breaker
 - **Configuration** ([pkg/config/config.go](pkg/config/config.go)): Environment-based configuration management with validation and runtime connectivity checks
 - **Health Server** ([pkg/health/server.go](pkg/health/server.go)): HTTP server providing liveness and readiness endpoints for Kubernetes
-- **Secrets Management** ([pkg/secrets/secrets.go](pkg/secrets/secrets.go)): Flexible secrets provider supporting multiple backends (env, file, AWS, Vault, K8s)
+- **Secrets Management** ([pkg/secrets/secrets.go](pkg/secrets/secrets.go)): Flexible secrets provider (env and file implemented; AWS, Vault, and Kubernetes Secrets are placeholders for future implementation)
 - **Main Monitor** ([cmd/octopus-monitor/main.go](cmd/octopus-monitor/main.go)): Orchestrates all components with graceful degradation and adaptive polling
 
 ## Prerequisites
@@ -59,7 +61,7 @@ The application consists of several key components:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/darren/octopus-home-mini.git
+git clone https://github.com/soothill/octopus-home-mini.git
 cd octopus-home-mini
 ```
 
@@ -252,6 +254,13 @@ The application writes the following metrics to InfluxDB:
 - `consumption` (float): Total cumulative consumption (kWh)
 
 **Timestamp**: Reading time from the Home Mini device
+
+## Historical Data and Backfill
+
+- Does it pull historical data from Octopus? By default, the monitor does not automatically fetch historical/backfill data from the Octopus API. Each poll requests the window from the last successful poll up to "now". On first start, it fetches only one poll interval (default 30 seconds) of recent data—not 30 minutes.
+- Client supports historical windows: The Octopus client exposes GetTelemetry(ctx, start, end) which retrieves telemetry for any time range at 10-second resolution. If you need to backfill older data, you can write a small one-off program using this client or extend the monitor to perform a bounded backfill on startup.
+- Cache-based backfill: If InfluxDB is unavailable, the monitor caches readings locally and later syncs them to InfluxDB when the connection is restored. This sync uses locally cached points and does not call the Octopus API.
+- Rate limits: Be mindful of Octopus' API limit of ~100 calls/hour if implementing custom backfill logic.
 
 ## Querying Data
 
