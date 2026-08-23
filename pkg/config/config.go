@@ -80,20 +80,23 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := defaultConfig()
 
-	// Load config from YAML file if it exists
-	if _, err := os.Stat("config.yaml"); err == nil {
-		yamlFile, err := os.ReadFile("config.yaml")
-		if err != nil {
-			return nil, fmt.Errorf("error reading config.yaml: %w", err)
-		}
-		if err := yaml.Unmarshal(yamlFile, cfg); err != nil {
-			return nil, fmt.Errorf("error unmarshalling config.yaml: %w", err)
-		}
-	}
-
-	// Try to load .env file (optional - ignore errors if it doesn't exist)
+	// Load .env before resolving the optional configuration path so
+	// OCTOPUS_CONFIG_PATH works consistently for local and container runs.
 	//nolint:errcheck // .env file is optional
 	_ = godotenv.Load()
+
+	// Load config from YAML file if it exists
+	configPath := getEnv("OCTOPUS_CONFIG_PATH", "config.yaml")
+	if _, err := os.Stat(configPath); err == nil {
+		yamlFile, err := os.ReadFile(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("error reading %s: %w", configPath, err)
+		}
+		if err := yaml.Unmarshal(yamlFile, cfg); err != nil {
+			return nil, fmt.Errorf("error unmarshalling %s: %w", configPath, err)
+		}
+		normalizeYAMLDurations(cfg)
+	}
 
 	// Override with environment variables
 	overrideWithEnv(cfg)
@@ -110,23 +113,45 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// normalizeYAMLDurations preserves the documented YAML convention where
+// numeric values use seconds (or hours for cache cleanup). YAML unmarshals a
+// number directly into time.Duration as nanoseconds, while explicit strings
+// such as "5m" are already converted correctly.
+func normalizeYAMLDurations(cfg *Config) {
+	cfg.PollInterval = normalizeYAMLDuration(cfg.PollInterval, time.Second)
+	cfg.InfluxConnectTimeout = normalizeYAMLDuration(cfg.InfluxConnectTimeout, time.Second)
+	cfg.InfluxWriteTimeout = normalizeYAMLDuration(cfg.InfluxWriteTimeout, time.Second)
+	cfg.PollTimeout = normalizeYAMLDuration(cfg.PollTimeout, time.Second)
+	cfg.ShutdownTimeout = normalizeYAMLDuration(cfg.ShutdownTimeout, time.Second)
+	cfg.CacheSyncTimeout = normalizeYAMLDuration(cfg.CacheSyncTimeout, time.Second)
+	cfg.ReconnectMaxElapsedTime = normalizeYAMLDuration(cfg.ReconnectMaxElapsedTime, time.Second)
+	cfg.CacheCleanupInterval = normalizeYAMLDuration(cfg.CacheCleanupInterval, time.Hour)
+}
+
+func normalizeYAMLDuration(value, unit time.Duration) time.Duration {
+	if value > 0 && value < time.Second {
+		return value * unit
+	}
+	return value
+}
+
 // defaultConfig returns a new Config with default values
 func defaultConfig() *Config {
 	return &Config{
 		InfluxDBURL:               "http://localhost:8086",
 		InfluxDBBucket:            "octopus_energy",
 		InfluxDBMeasurement:       "energy_consumption",
-		PollInterval:              30 * time.Second,
+		PollInterval:              300 * time.Second,
 		CacheDir:                  "./cache",
 		LogLevel:                  "info",
 		InfluxConnectTimeout:      30 * time.Second,
 		InfluxWriteTimeout:        10 * time.Second,
 		PollTimeout:               30 * time.Second,
 		ShutdownTimeout:           5 * time.Second,
-		CacheSyncTimeout:          60 * time.Second,
+		CacheSyncTimeout:          600 * time.Second,
 		ReconnectMaxElapsedTime:   300 * time.Second, // 5 minutes
 		ConsecutiveErrorThreshold: 3,
-		MaxBackoffFactor:          4,
+		MaxBackoffFactor:          3,
 		CacheCleanupEnabled:       true,
 		CacheCleanupInterval:      24 * time.Hour,
 		CacheRetentionDays:        7,

@@ -5,7 +5,7 @@ A Go application that pulls usage data from an Octopus Energy Home Mini device a
 ## Features
 
 ### Core Functionality
-- **Real-time Data Collection**: Pulls energy consumption data from Octopus Home Mini every 30 seconds (configurable)
+- **Real-time Data Collection**: Pulls energy consumption data from Octopus Home Mini every five minutes with scheduling jitter (configurable)
 - **Telemetry Resolution**: 10-second data resolution via Octopus API grouping
 - **Historical Range Support (client)**: The Octopus API client supports fetching arbitrary time windows via start and end timestamps; the monitor polls only the most recent window and does not automatically request historical backfill from the API
 - **InfluxDB Integration**: Stores energy metrics in InfluxDB for long-term analysis and visualization
@@ -16,7 +16,7 @@ A Go application that pulls usage data from an Octopus Energy Home Mini device a
 ### Reliability & Resilience
 - **Circuit Breakers**: Protects against cascading failures with circuit breaker pattern on all external services (Octopus API, InfluxDB, Slack)
 - **Exponential Backoff**: Automatic retry with exponential backoff for transient failures
-- **Graceful Degradation**: Enters degraded mode after consecutive failures with adaptive polling intervals (2x, 3x, up to 4x) to reduce load on failing services
+- **Graceful Degradation**: Enters degraded mode after consecutive failures with adaptive polling intervals to reduce load on failing services
 - **Health Monitoring**: Continuously monitors InfluxDB connection health with automatic recovery
 - **Configuration Validation**: Validates configuration and tests connectivity on startup to fail fast
 - **Proper Resource Cleanup**: Graceful shutdown with timeout, signal handler cleanup, and HTTP connection cleanup
@@ -85,7 +85,7 @@ cp .env.example .env
 4. Edit `.env` and fill in your credentials:
 ```bash
 # Octopus Energy API Configuration
-OCTOPUS_API_KEY=sk_live_your_api_key_here
+OCTOPUS_API_KEY=your_octopus_api_key_here
 OCTOPUS_ACCOUNT_NUMBER=A-12345678
 
 # InfluxDB Configuration
@@ -98,9 +98,12 @@ INFLUXDB_BUCKET=octopus_energy
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 
 # Application Configuration (optional)
-POLL_INTERVAL_SECONDS=30
+POLL_INTERVAL_SECONDS=300
 CACHE_DIR=./cache
 LOG_LEVEL=info
+CACHE_SYNC_TIMEOUT_SECONDS=600
+MAX_BACKOFF_FACTOR=3
+CACHE_RETENTION_DAYS=7
 ```
 
 ## Quick Setup with Makefile
@@ -257,10 +260,10 @@ The application writes the following metrics to InfluxDB:
 
 ## Historical Data and Backfill
 
-- Does it pull historical data from Octopus? By default, the monitor does not automatically fetch historical/backfill data from the Octopus API. Each poll requests the window from the last successful poll up to "now". On first start, it fetches only one poll interval (default 30 seconds) of recent data—not 30 minutes.
+- Does it pull historical data from Octopus? By default, the monitor does not automatically fetch historical/backfill data from the Octopus API. Each poll requests the window from the last successful poll up to "now". On first start, it fetches only one poll interval (default five minutes) of recent data—not 30 minutes.
 - Client supports historical windows: The Octopus client exposes GetTelemetry(ctx, start, end) which retrieves telemetry for any time range at 10-second resolution. If you need to backfill older data, you can write a small one-off program using this client or extend the monitor to perform a bounded backfill on startup.
 - Cache-based backfill: If InfluxDB is unavailable, the monitor caches readings locally and later syncs them to InfluxDB when the connection is restored. This sync uses locally cached points and does not call the Octopus API.
-- Rate limits: Be mindful of Octopus' API limit of ~100 calls/hour if implementing custom backfill logic.
+- Rate limits: The Octopus API quota is shared by all integrations using the same account or API key. Keep custom backfill bounded so it does not compete with telemetry, dispatch, or mobile-app requests.
 
 ## Querying Data
 
@@ -336,9 +339,10 @@ The application implements intelligent graceful degradation to handle service fa
 When the Octopus API experiences consecutive failures (3+), the monitor:
 1. Enters **degraded mode** and sends a Slack alert
 2. Increases the polling interval to reduce load on the failing service:
-   - 1st degradation: 2x normal interval (e.g., 30s → 60s)
-   - 2nd degradation: 3x normal interval (e.g., 30s → 90s)
-   - 3rd+ degradation: 4x normal interval (maximum, e.g., 30s → 120s)
+   - 1st degradation: 2x normal interval (e.g., 300s → 600s)
+   - Further degradation: increases up to the configured maximum (default 3x, e.g., 300s → 900s)
+   - API backoff/rate-limit responses: immediately use the maximum polling backoff (about 15 minutes by default)
+   - A random offset of up to 30 seconds prevents synchronized request bursts with other integrations
 3. Continues attempting to fetch data at reduced frequency
 4. Automatically recovers and resumes normal polling when the service is restored
 
@@ -388,7 +392,8 @@ When InfluxDB is unavailable:
 2. Cache files are organized by date: `cache_YYYY-MM-DD.json`
 3. The application continues fetching data from Octopus API
 4. When InfluxDB connection is restored, all cached data is automatically synced
-5. Cache is cleared after successful sync
+5. Cached points are replayed in batches, then redundant snapshots are removed after successful sync
+6. Unsent cache snapshots are retained for seven days by default
 
 The cache system ensures **no data loss** during InfluxDB outages.
 
@@ -595,7 +600,7 @@ octopus-home-mini/
 
 ## API Rate Limits
 
-The Octopus Energy API has a rate limit of **100 calls per hour** shared across all integrations (including their mobile app). The default polling interval of 30 seconds should stay well within this limit.
+The Octopus Energy API quota is shared across integrations using the same account or API key, including EV dispatch services and the mobile app. The default five-minute interval uses about 12 telemetry calls per hour and adds up to 30 seconds of jitter so it does not repeatedly align with other pollers. Every successful request covers the complete window since the previous successful poll, so the API's 10-second telemetry samples are preserved; only ingestion latency changes. Rate-limit responses pause polling for about 15 minutes, and startup rate limits are retried in-process instead of causing a container restart loop.
 
 ## License
 

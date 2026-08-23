@@ -1,5 +1,7 @@
 .PHONY: build run test clean install deps setup configure get-api-key test-slack test-influx verify-config build-all build-linux-amd64 build-linux-arm64 build-linux-armv7 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 docker-build docker-buildx docker-buildx-push docker-run
 
+INFLUXDB_HOST_IP ?= 10.10.150.200
+
 # Setup and Configuration
 setup: deps
 	@echo "Setting up Octopus Home Mini Monitor..."
@@ -164,7 +166,7 @@ docker-buildx-push:
 # Docker run
 docker-run:
 	@echo "Running Docker container with auto-restart policy..."
-	@docker run -d --name octopus-monitor --restart unless-stopped --env-file .env -v ./cache:/root/cache octopus-monitor:latest
+	@docker run -d --name octopus-monitor --restart unless-stopped --add-host influxdb.local:$(INFLUXDB_HOST_IP) --env-file .env -v ./cache:/root/cache octopus-monitor:latest
 
 # Show help
 help:

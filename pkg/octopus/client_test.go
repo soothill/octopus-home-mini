@@ -2,6 +2,8 @@ package octopus
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -311,6 +313,48 @@ func TestClient_BackoffConfiguration(t *testing.T) {
 
 	if b.MaxElapsedTime != maxElapsedTime { //nolint:staticcheck // Safe access - we just verified b is not nil
 		t.Errorf("MaxElapsedTime = %v, want %v", b.MaxElapsedTime, maxElapsedTime)
+	}
+}
+
+func TestRateLimitDetection(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "back off response",
+			err:  errors.New("queries are too aggressive, back off"),
+			want: true,
+		},
+		{
+			name: "429 response",
+			err:  errors.New("status code: 429"),
+			want: true,
+		},
+		{
+			name: "ordinary error",
+			err:  errors.New("connection refused"),
+			want: false,
+		},
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isBackoffResponse(tt.err); got != tt.want {
+				t.Errorf("isBackoffResponse() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	err := fmt.Errorf("wrapped: %w", &RateLimitError{Err: errors.New("back off")})
+	if !IsRateLimitError(err) {
+		t.Error("IsRateLimitError() should detect wrapped RateLimitError")
 	}
 }
 

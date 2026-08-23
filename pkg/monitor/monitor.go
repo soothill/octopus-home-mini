@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"regexp"
 	"strings"
 	"sync"
@@ -15,6 +16,11 @@ import (
 	"github.com/soothill/octopus-home-mini/pkg/influx"
 	"github.com/soothill/octopus-home-mini/pkg/octopus"
 	"github.com/soothill/octopus-home-mini/pkg/slack"
+)
+
+const (
+	maxPollJitter      = 30 * time.Second
+	cacheSyncBatchSize = 5000
 )
 
 // Clock interface for time-related functions
@@ -50,6 +56,7 @@ type Monitor struct {
 	SlackNotifier *slack.Notifier // May be nil if Slack is disabled
 	state         *State
 	Clock         Clock
+	Jitter        func(time.Duration) time.Duration
 
 	// Internal state
 	mu           sync.RWMutex
@@ -73,6 +80,7 @@ func New(cfg *config.Config, octopusClient OctopusClient, influxClient *influx.C
 		Cache:         cache,
 		SlackNotifier: slackNotifier,
 		Clock:         clock,
+		Jitter:        addPollJitter,
 		LastPollTime:  clock.Now().Add(-cfg.PollInterval),
 		state: &State{
 			InfluxHealthy: influxClient != nil,
@@ -80,6 +88,33 @@ func New(cfg *config.Config, octopusClient OctopusClient, influxClient *influx.C
 			BackoffFactor: 1,
 		},
 	}
+}
+
+// addPollJitter prevents this monitor from repeatedly lining up its API calls
+// with other integrations that share the same Octopus account quota.
+func addPollJitter(base time.Duration) time.Duration {
+	jitter := base / 10
+	if jitter > maxPollJitter {
+		jitter = maxPollJitter
+	}
+	if jitter <= 0 {
+		return base
+	}
+
+	offset := time.Duration(rand.Int63n(int64(2*jitter)+1)) - jitter //nolint:gosec // Scheduling jitter is not security-sensitive.
+	interval := base + offset
+	if interval < time.Second {
+		return time.Second
+	}
+	return interval
+}
+
+func (m *Monitor) nextPollInterval() time.Duration {
+	base := m.Cfg.PollInterval * time.Duration(m.getBackoffFactor())
+	if m.Jitter == nil {
+		return base
+	}
+	return m.Jitter(base)
 }
 
 // SendSlackError sends an error notification to Slack if enabled
@@ -206,7 +241,7 @@ func sanitizeError(err error) string {
 
 // Run executes the main monitoring loop with adaptive polling
 func (m *Monitor) Run(stopChan chan struct{}) {
-	ticker := m.Clock.NewTicker(m.Cfg.PollInterval)
+	ticker := m.Clock.NewTicker(m.nextPollInterval())
 	defer ticker.Stop()
 
 	for {
@@ -214,13 +249,9 @@ func (m *Monitor) Run(stopChan chan struct{}) {
 		case <-ticker.C:
 			m.poll()
 
-			// Adjust poll interval based on degraded mode
-			backoff := m.getBackoffFactor()
-			if backoff > 1 {
-				ticker.Reset(m.Cfg.PollInterval * time.Duration(backoff))
-			} else {
-				ticker.Reset(m.Cfg.PollInterval)
-			}
+			// Add a small jitter so shared-account integrations do not create
+			// synchronized request bursts.
+			ticker.Reset(m.nextPollInterval())
 
 		case <-stopChan:
 			return
@@ -259,6 +290,11 @@ func (m *Monitor) handleFetchError(err error) {
 	m.incrementConsecutiveErr()
 	log.Error().Err(err).Msg("Error fetching telemetry")
 
+	if octopus.IsRateLimitError(err) {
+		m.handleRateLimitError(err)
+		return
+	}
+
 	consecutiveErrs := m.getConsecutiveErr()
 	if consecutiveErrs < m.Cfg.ConsecutiveErrorThreshold {
 		return
@@ -269,6 +305,25 @@ func (m *Monitor) handleFetchError(err error) {
 	} else {
 		m.increaseBackoff()
 	}
+}
+
+func (m *Monitor) handleRateLimitError(err error) {
+	if m.getDegradedMode() {
+		m.setBackoffFactor(m.Cfg.MaxBackoffFactor)
+		log.Warn().
+			Int("backoff_factor", m.Cfg.MaxBackoffFactor).
+			Dur("new_interval", m.Cfg.PollInterval*time.Duration(m.Cfg.MaxBackoffFactor)).
+			Msg("Octopus API requested backoff; holding maximum polling backoff")
+		return
+	}
+
+	m.setDegradedMode(true)
+	m.setBackoffFactor(m.Cfg.MaxBackoffFactor)
+	m.SendSlackWarning("Octopus API", fmt.Sprintf("Octopus API requested backoff; slowing polling to %s: %v", m.Cfg.PollInterval*time.Duration(m.Cfg.MaxBackoffFactor), sanitizeError(err)))
+	log.Warn().
+		Int("backoff_factor", m.Cfg.MaxBackoffFactor).
+		Dur("new_interval", m.Cfg.PollInterval*time.Duration(m.Cfg.MaxBackoffFactor)).
+		Msg("Octopus API requested backoff; entering maximum polling backoff")
 }
 
 func (m *Monitor) enterDegradedMode(consecutiveErrs int, err error) {
@@ -345,22 +400,18 @@ func (m *Monitor) writeToInflux(telemetryData []octopus.TelemetryData) error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.Cfg.InfluxWriteTimeout)
 	defer cancel()
 
+	dataPoints := make([]influx.DataPoint, 0, len(telemetryData))
 	for _, data := range telemetryData {
-		dp := influx.DataPoint{
+		dataPoints = append(dataPoints, influx.DataPoint{
 			Timestamp:        data.ReadAt,
 			ConsumptionDelta: data.ConsumptionDelta,
 			Demand:           data.Demand,
 			CostDelta:        data.CostDelta,
 			Consumption:      data.Consumption,
-		}
-
-		if err := m.InfluxClient.WritePointDirectly(ctx, dp); err != nil {
-			return err
-		}
+		})
 	}
 
-	m.InfluxClient.Flush()
-	return nil
+	return m.InfluxClient.WritePointsDirectly(ctx, dataPoints)
 }
 
 // cacheData stores telemetry data in local cache
@@ -453,24 +504,30 @@ func (m *Monitor) SyncCache() {
 	defer cancel()
 
 	successCount := 0
-	for _, data := range cachedData {
-		dp := influx.DataPoint{
-			Timestamp:        data.Timestamp,
-			ConsumptionDelta: data.ConsumptionDelta,
-			Demand:           data.Demand,
-			CostDelta:        data.CostDelta,
-			Consumption:      data.Consumption,
+	for start := 0; start < len(cachedData); start += cacheSyncBatchSize {
+		end := start + cacheSyncBatchSize
+		if end > len(cachedData) {
+			end = len(cachedData)
 		}
 
-		if err := m.InfluxClient.WritePointDirectly(ctx, dp); err != nil {
-			log.Error().Err(err).Msg("Error writing cached point")
+		batch := make([]influx.DataPoint, 0, end-start)
+		for _, data := range cachedData[start:end] {
+			batch = append(batch, influx.DataPoint{
+				Timestamp:        data.Timestamp,
+				ConsumptionDelta: data.ConsumptionDelta,
+				Demand:           data.Demand,
+				CostDelta:        data.CostDelta,
+				Consumption:      data.Consumption,
+			})
+		}
+
+		if err := m.InfluxClient.WritePointsDirectly(ctx, batch); err != nil {
+			log.Error().Err(err).Int("synced", successCount).Msg("Error writing cached batch")
 			m.SendSlackError("Cache Sync", fmt.Sprintf("Failed to sync cached data: %v", sanitizeError(err)))
 			return
 		}
-		successCount++
+		successCount += len(batch)
 	}
-
-	m.InfluxClient.Flush()
 
 	// Clear cache after successful sync
 	if err := m.Cache.Clear(); err != nil {

@@ -20,7 +20,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "valid configuration",
 			envVars: map[string]string{
-				"OCTOPUS_API_KEY":        "test_api_key_12345678901234567890",
+				"OCTOPUS_API_KEY":        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 				"OCTOPUS_ACCOUNT_NUMBER": "A-12345678",
 				"INFLUXDB_URL":           "http://localhost:8086",
 				"INFLUXDB_TOKEN":         "test_token",
@@ -48,7 +48,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "missing account number",
 			envVars: map[string]string{
-				"OCTOPUS_API_KEY":   "test_api_key_12345678901234567890",
+				"OCTOPUS_API_KEY":   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 				"INFLUXDB_URL":      "http://localhost:8086",
 				"INFLUXDB_TOKEN":    "test_token",
 				"INFLUXDB_ORG":      "test_org",
@@ -60,7 +60,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "missing influxdb token",
 			envVars: map[string]string{
-				"OCTOPUS_API_KEY":        "test_api_key_12345678901234567890",
+				"OCTOPUS_API_KEY":        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 				"OCTOPUS_ACCOUNT_NUMBER": "A-12345678",
 				"INFLUXDB_URL":           "http://localhost:8086",
 				"INFLUXDB_ORG":           "test_org",
@@ -72,7 +72,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "slack disabled",
 			envVars: map[string]string{
-				"OCTOPUS_API_KEY":        "test_api_key_12345678901234567890",
+				"OCTOPUS_API_KEY":        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 				"OCTOPUS_ACCOUNT_NUMBER": "A-12345678",
 				"INFLUXDB_URL":           "http://localhost:8086",
 				"INFLUXDB_TOKEN":         "test_token",
@@ -84,7 +84,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "custom poll interval",
 			envVars: map[string]string{
-				"OCTOPUS_API_KEY":        "test_api_key_12345678901234567890",
+				"OCTOPUS_API_KEY":        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 				"OCTOPUS_ACCOUNT_NUMBER": "A-12345678",
 				"INFLUXDB_URL":           "http://localhost:8086",
 				"INFLUXDB_TOKEN":         "test_token",
@@ -152,7 +152,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "valid config",
 			cfg: &Config{
-				OctopusAPIKey:             "test_key_123456789012345678901234",
+				OctopusAPIKey:             "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 				OctopusAccountNumber:      "A-12345678",
 				InfluxDBURL:               "http://localhost:8086",
 				InfluxDBToken:             "test_token",
@@ -168,7 +168,7 @@ func TestValidate(t *testing.T) {
 				InfluxWriteTimeout:        10 * time.Second,
 				PollTimeout:               30 * time.Second,
 				ShutdownTimeout:           5 * time.Second,
-				CacheSyncTimeout:          60 * time.Second,
+				CacheSyncTimeout:          600 * time.Second,
 				ReconnectMaxElapsedTime:   300 * time.Second,
 				ConsecutiveErrorThreshold: 3,
 				MaxBackoffFactor:          4,
@@ -198,7 +198,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "empty influxdb url",
 			cfg: &Config{
-				OctopusAPIKey:        "test_key_123456789012345678901234",
+				OctopusAPIKey:        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 				OctopusAccountNumber: "A-12345678",
 				InfluxDBToken:        "test_token",
 				InfluxDBOrg:          "test_org",
@@ -273,6 +273,31 @@ func TestGetEnvAsInt(t *testing.T) {
 				t.Errorf("getEnvAsInt() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNormalizeYAMLDurations(t *testing.T) {
+	cfg := &Config{
+		PollInterval:            300,
+		InfluxConnectTimeout:    30,
+		InfluxWriteTimeout:      10,
+		PollTimeout:             30,
+		ShutdownTimeout:         5,
+		CacheSyncTimeout:        600,
+		ReconnectMaxElapsedTime: 300,
+		CacheCleanupInterval:    24,
+	}
+
+	normalizeYAMLDurations(cfg)
+
+	if cfg.PollInterval != 5*time.Minute {
+		t.Errorf("PollInterval = %v, want 5m", cfg.PollInterval)
+	}
+	if cfg.CacheSyncTimeout != 10*time.Minute {
+		t.Errorf("CacheSyncTimeout = %v, want 10m", cfg.CacheSyncTimeout)
+	}
+	if cfg.CacheCleanupInterval != 24*time.Hour {
+		t.Errorf("CacheCleanupInterval = %v, want 24h", cfg.CacheCleanupInterval)
 	}
 }
 

@@ -22,6 +22,12 @@ import (
 	"github.com/soothill/octopus-home-mini/pkg/slack"
 )
 
+const (
+	octopusStartupInitialInterval = 5 * time.Minute
+	octopusStartupMaxInterval     = 15 * time.Minute
+	octopusStartupMaxElapsedTime  = time.Hour
+)
+
 type application struct {
 	config        *config.Config
 	cache         *cache.Cache
@@ -148,10 +154,48 @@ func initSlackNotifier(enabled bool, webhookURL string) *slack.Notifier {
 }
 
 func initOctopusClient(apiKey, accountNumber string) (*octopus.Client, error) {
-	octopusClient := octopus.NewClient(apiKey, accountNumber)
+	return initOctopusClientWithEndpoint(apiKey, accountNumber, "")
+}
+
+func initOctopusClientWithEndpoint(apiKey, accountNumber, endpoint string) (*octopus.Client, error) {
+	return initOctopusClientWithBackoff(apiKey, accountNumber, endpoint, newOctopusStartupBackoff())
+}
+
+func newOctopusStartupBackoff() *backoff.ExponentialBackOff {
+	retryBackoff := backoff.NewExponentialBackOff()
+	retryBackoff.InitialInterval = octopusStartupInitialInterval
+	retryBackoff.MaxInterval = octopusStartupMaxInterval
+	retryBackoff.MaxElapsedTime = octopusStartupMaxElapsedTime
+	retryBackoff.Multiplier = 2
+	retryBackoff.RandomizationFactor = 0.2
+	retryBackoff.Reset()
+	return retryBackoff
+}
+
+func initOctopusClientWithBackoff(apiKey, accountNumber, endpoint string, retryBackoff backoff.BackOff) (*octopus.Client, error) {
+	var octopusClient *octopus.Client
+	if endpoint == "" {
+		octopusClient = octopus.NewClient(apiKey, accountNumber)
+	} else {
+		octopusClient = octopus.NewClientWithEndpoint(apiKey, accountNumber, endpoint)
+	}
+
 	ctx := context.Background()
-	if err := octopusClient.Initialize(ctx); err != nil {
-		return nil, err
+	operation := func() error {
+		err := octopusClient.Initialize(ctx)
+		if err == nil {
+			return nil
+		}
+		if octopus.IsRateLimitError(err) {
+			return err
+		}
+		return backoff.Permanent(err)
+	}
+	notify := func(_ error, next time.Duration) {
+		log.Warn().Dur("retry_in", next).Msg("Octopus API rate limited startup; retrying without restarting the container")
+	}
+	if err := backoff.RetryNotify(operation, retryBackoff, notify); err != nil {
+		return nil, fmt.Errorf("failed to initialize Octopus client: %w", err)
 	}
 	log.Info().Msg("Octopus client initialized successfully")
 	return octopusClient, nil

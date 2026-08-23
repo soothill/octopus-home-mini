@@ -182,6 +182,11 @@ func TestCache_Clear(t *testing.T) {
 	}
 	cache.Add(testData)
 
+	oldSnapshot := filepath.Join(cacheDir, "cache_2020-01-01.json")
+	if err := os.WriteFile(oldSnapshot, []byte("[]"), 0o644); err != nil {
+		t.Fatalf("Failed to create old snapshot: %v", err)
+	}
+
 	// Clear
 	err = cache.Clear()
 	if err != nil {
@@ -190,6 +195,17 @@ func TestCache_Clear(t *testing.T) {
 
 	if cache.Count() != 0 {
 		t.Errorf("Count() = %d after Clear(), want 0", cache.Count())
+	}
+	if _, err := os.Stat(oldSnapshot); !os.IsNotExist(err) {
+		t.Error("Clear() did not remove the redundant historical snapshot")
+	}
+
+	reloaded, err := NewCache(cacheDir)
+	if err != nil {
+		t.Fatalf("NewCache() after Clear() error = %v", err)
+	}
+	if reloaded.Count() != 0 {
+		t.Errorf("Reloaded Count() = %d after Clear(), want 0", reloaded.Count())
 	}
 }
 

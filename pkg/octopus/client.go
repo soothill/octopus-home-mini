@@ -2,8 +2,10 @@ package octopus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +40,25 @@ type TelemetryData struct {
 	Demand           float64   `json:"demand"`
 	CostDelta        float64   `json:"costDelta"`
 	Consumption      float64   `json:"consumption"`
+}
+
+// RateLimitError indicates the Octopus API asked the client to slow down.
+type RateLimitError struct {
+	Err error
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("octopus API rate limited request: %v", e.Err)
+}
+
+func (e *RateLimitError) Unwrap() error {
+	return e.Err
+}
+
+// IsRateLimitError reports whether err is an Octopus rate-limit/backoff response.
+func IsRateLimitError(err error) bool {
+	var rateLimitErr *RateLimitError
+	return errors.As(err, &rateLimitErr)
 }
 
 // NewClient creates a new Octopus Energy API client
@@ -78,6 +99,26 @@ func newBackoff() *backoff.ExponentialBackOff {
 	return b
 }
 
+func isBackoffResponse(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "back off") ||
+		strings.Contains(msg, "backoff") ||
+		strings.Contains(msg, "too aggressive") ||
+		strings.Contains(msg, "too many requests") ||
+		strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "rate-limit") ||
+		strings.Contains(msg, "status code: 429") ||
+		strings.Contains(msg, "status 429")
+}
+
+func permanentRateLimitError(err error) error {
+	return backoff.Permanent(&RateLimitError{Err: err})
+}
+
 // Authenticate obtains a JWT token from API with exponential backoff retry
 func (c *Client) Authenticate(ctx context.Context) error {
 	operation := func() error {
@@ -98,6 +139,9 @@ func (c *Client) Authenticate(ctx context.Context) error {
 		}
 
 		if err := c.client.Run(ctx, req, &resp); err != nil {
+			if isBackoffResponse(err) {
+				return permanentRateLimitError(fmt.Errorf("failed to authenticate: %w", err))
+			}
 			return fmt.Errorf("failed to authenticate: %w", err)
 		}
 
@@ -173,6 +217,9 @@ func (c *Client) GetMeterGUID(ctx context.Context) error {
 		}
 
 		if err := c.client.Run(ctx, req, &resp); err != nil {
+			if isBackoffResponse(err) {
+				return permanentRateLimitError(fmt.Errorf("failed to get meter GUID: %w", err))
+			}
 			return fmt.Errorf("failed to get meter GUID: %w", err)
 		}
 
@@ -273,8 +320,12 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start
 		}
 
 		if err := c.client.Run(ctx, req, &resp); err != nil {
+			wrappedErr := fmt.Errorf("failed to get telemetry: %w", err)
 			fmt.Printf("ERROR: Octopus API request failed: %v\n", err)
-			return fmt.Errorf("failed to get telemetry: %w", err)
+			if isBackoffResponse(err) {
+				return permanentRateLimitError(wrappedErr)
+			}
+			return wrappedErr
 		}
 
 		// Log response details
@@ -341,8 +392,13 @@ func (c *Client) fetchTelemetryWithRetry(ctx context.Context, guid string, start
 			len(telemetry), skippedCount)
 
 		if len(telemetry) == 0 {
-			fmt.Printf("ERROR: No valid data points after parsing for device %s, time range %s to %s (skipped %d of %d raw points)\n",
-				guid, start.Format(time.RFC3339), end.Format(time.RFC3339), skippedCount, len(resp.SmartMeterTelemetry))
+			if len(resp.SmartMeterTelemetry) == 0 {
+				fmt.Printf("INFO: No telemetry data available for device %s, time range %s to %s\n",
+					guid, start.Format(time.RFC3339), end.Format(time.RFC3339))
+			} else {
+				fmt.Printf("ERROR: No valid data points after parsing for device %s, time range %s to %s (skipped %d of %d raw points)\n",
+					guid, start.Format(time.RFC3339), end.Format(time.RFC3339), skippedCount, len(resp.SmartMeterTelemetry))
+			}
 		}
 
 		return nil

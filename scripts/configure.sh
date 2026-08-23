@@ -110,7 +110,7 @@ echo -e "${BLUE}4. Application Settings${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
-read_with_default "Poll Interval (seconds) [${POLL_INTERVAL_SECONDS:-30}]: " "${POLL_INTERVAL_SECONDS:-30}" POLL_INTERVAL_SECONDS
+read_with_default "Poll Interval (seconds) [${POLL_INTERVAL_SECONDS:-300}]: " "${POLL_INTERVAL_SECONDS:-300}" POLL_INTERVAL_SECONDS
 read_with_default "Cache Directory [${CACHE_DIR:-./cache}]: " "${CACHE_DIR:-./cache}" CACHE_DIR
 read_with_default "Log Level (info/debug/error) [${LOG_LEVEL:-info}]: " "${LOG_LEVEL:-info}" LOG_LEVEL
 echo ""
@@ -137,6 +137,9 @@ SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
 POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS}
 CACHE_DIR=${CACHE_DIR}
 LOG_LEVEL=${LOG_LEVEL}
+CACHE_SYNC_TIMEOUT_SECONDS=${CACHE_SYNC_TIMEOUT_SECONDS:-600}
+MAX_BACKOFF_FACTOR=${MAX_BACKOFF_FACTOR:-3}
+CACHE_RETENTION_DAYS=${CACHE_RETENTION_DAYS:-7}
 EOF
 
 echo -e "${GREEN}✓ Configuration saved to .env${NC}"

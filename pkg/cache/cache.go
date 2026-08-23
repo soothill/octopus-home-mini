@@ -76,8 +76,31 @@ func (c *Cache) Clear() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	previousData := c.data
 	c.data = make([]DataPoint, 0)
-	return c.save()
+	if err := c.save(); err != nil {
+		c.data = previousData
+		return err
+	}
+
+	// Cache files are outage buffers, not archives. After every point has been
+	// synced, retain only today's empty snapshot and remove redundant historical
+	// snapshots so disk use does not grow indefinitely.
+	currentFile := c.filename()
+	files, err := filepath.Glob(filepath.Join(c.cacheDir, "cache_*.json"))
+	if err != nil {
+		return fmt.Errorf("failed to list cache files after clear: %w", err)
+	}
+	for _, file := range files {
+		if file == currentFile {
+			continue
+		}
+		if err := os.Remove(file); err != nil {
+			return fmt.Errorf("failed to remove synced cache file %s: %w", file, err)
+		}
+	}
+
+	return nil
 }
 
 // Count returns the number of cached data points
@@ -90,18 +113,39 @@ func (c *Cache) Count() int {
 
 // save persists the cache to disk
 func (c *Cache) save() error {
-	filename := filepath.Join(c.cacheDir, fmt.Sprintf("cache_%s.json", time.Now().Format("2006-01-02")))
-
-	data, err := json.MarshalIndent(c.data, "", "  ")
+	filename := c.filename()
+	tempFile, err := os.CreateTemp(c.cacheDir, ".cache-*.tmp")
 	if err != nil {
-		return fmt.Errorf("failed to marshal cache data: %w", err)
+		return fmt.Errorf("failed to create temporary cache file: %w", err)
 	}
+	tempName := tempFile.Name()
+	defer os.Remove(tempName)
 
-	if err := os.WriteFile(filename, data, 0644); err != nil {
-		return fmt.Errorf("failed to write cache file: %w", err)
+	encoder := json.NewEncoder(tempFile)
+	if err := encoder.Encode(c.data); err != nil {
+		tempFile.Close()
+		return fmt.Errorf("failed to encode cache data: %w", err)
+	}
+	if err := tempFile.Sync(); err != nil {
+		tempFile.Close()
+		return fmt.Errorf("failed to sync cache data: %w", err)
+	}
+	if err := tempFile.Chmod(0o644); err != nil {
+		tempFile.Close()
+		return fmt.Errorf("failed to set cache permissions: %w", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("failed to close cache file: %w", err)
+	}
+	if err := os.Rename(tempName, filename); err != nil {
+		return fmt.Errorf("failed to replace cache file: %w", err)
 	}
 
 	return nil
+}
+
+func (c *Cache) filename() string {
+	return filepath.Join(c.cacheDir, fmt.Sprintf("cache_%s.json", time.Now().Format("2006-01-02")))
 }
 
 // Load loads cached data from disk

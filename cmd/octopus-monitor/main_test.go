@@ -1,9 +1,16 @@
 package main
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
@@ -23,13 +30,13 @@ func TestLoadConfig(t *testing.T) {
 	configContent := `
 log_level: "debug"
 cache_dir: "/tmp/octopus-home-mini-test"
-octopus_api_key: "test-api-key"
-octopus_account_number: "test-account-number"
-influxdb:
-  url: "http://localhost:8086"
-  token: "test-token"
-  org: "test-org"
-  bucket: "test-bucket"
+octopus_api_key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+octopus_account_number: "A-12345678"
+influxdb_url: "http://localhost:8086"
+influxdb_token: "test-token"
+influxdb_org: "test-org"
+influxdb_bucket: "test-bucket"
+slack_enabled: false
 `
 	configFile, err := os.CreateTemp("", "config-*.yaml")
 	assert.NoError(t, err)
@@ -69,9 +76,51 @@ func TestInitSlackNotifier(t *testing.T) {
 }
 
 func TestInitOctopusClient(t *testing.T) {
-	// This is a basic test to ensure the client is created.
-	// A more comprehensive test would require mocking the Octopus API.
-	client, err := initOctopusClient("test-api-key", "test-account-number")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		body, _ := io.ReadAll(r.Body)
+
+		switch {
+		case strings.Contains(string(body), "obtainKrakenToken"):
+			_, _ = w.Write([]byte(`{"data":{"obtainKrakenToken":{"token":"test-token"}}}`))
+		case strings.Contains(string(body), "account"):
+			_, _ = w.Write([]byte(`{"data":{"account":{"electricityAgreements":[{"meterPoint":{"meters":[{"smartDevices":[{"deviceId":"test-device"}]}]}}]}}}`))
+		default:
+			http.Error(w, `{"errors":[{"message":"unexpected query"}]}`, http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	client, err := initOctopusClientWithEndpoint("test-api-key", "test-account-number", server.URL)
 	assert.NoError(t, err)
 	assert.NotNil(t, client)
+}
+
+func TestInitOctopusClientRetriesRateLimit(t *testing.T) {
+	var authAttempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+
+		switch {
+		case strings.Contains(string(body), "obtainKrakenToken"):
+			if authAttempts.Add(1) == 1 {
+				_, _ = w.Write([]byte(`{"errors":[{"message":"Too many requests."}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"obtainKrakenToken":{"token":"test-token"}}}`))
+		case strings.Contains(string(body), "account"):
+			_, _ = w.Write([]byte(`{"data":{"account":{"electricityAgreements":[{"meterPoint":{"meters":[{"smartDevices":[{"deviceId":"test-device"}]}]}}]}}}`))
+		default:
+			http.Error(w, `{"errors":[{"message":"unexpected query"}]}`, http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	retryBackoff := backoff.WithMaxRetries(backoff.NewConstantBackOff(time.Millisecond), 2)
+	client, err := initOctopusClientWithBackoff("test-api-key", "test-account-number", server.URL, retryBackoff)
+	assert.NoError(t, err)
+	assert.NotNil(t, client)
+	assert.Equal(t, int32(2), authAttempts.Load())
 }

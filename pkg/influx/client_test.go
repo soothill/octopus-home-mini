@@ -253,6 +253,13 @@ func TestWriteDataPoints_EmptySlice(t *testing.T) {
 	}
 }
 
+func TestWritePointsDirectlyEmptySlice(t *testing.T) {
+	client := &Client{}
+	if err := client.WritePointsDirectly(context.Background(), nil); err != nil {
+		t.Fatalf("WritePointsDirectly() empty slice error = %v", err)
+	}
+}
+
 func TestWriteDataPoints_MultiplePoints(t *testing.T) {
 	// Test that WriteDataPoints processes all points
 	points := []DataPoint{

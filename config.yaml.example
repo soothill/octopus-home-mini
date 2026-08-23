@@ -14,7 +14,7 @@ slack_webhook_url: "YOUR_SLACK_WEBHOOK_URL"
 slack_enabled: true
 
 # Application Settings
-poll_interval_seconds: 30
+poll_interval_seconds: 300
 cache_dir: "./cache"
 log_level: "info"
 
@@ -23,10 +23,10 @@ influx_connect_timeout_seconds: 30
 influx_write_timeout_seconds: 10
 poll_timeout_seconds: 30
 shutdown_timeout_seconds: 5
-cache_sync_timeout_seconds: 60
+cache_sync_timeout_seconds: 600
 reconnect_max_elapsed_seconds: 300
 consecutive_error_threshold: 3
-max_backoff_factor: 4
+max_backoff_factor: 3
 
 # Cache Cleanup Settings
 cache_cleanup_enabled: true

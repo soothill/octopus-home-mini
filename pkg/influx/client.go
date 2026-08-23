@@ -207,23 +207,36 @@ func (c *Client) Close() {
 
 // WritePointDirectly writes a point directly (synchronous, returns error immediately) with circuit breaker
 func (c *Client) WritePointDirectly(ctx context.Context, dp DataPoint) error {
+	return c.WritePointsDirectly(ctx, []DataPoint{dp})
+}
+
+// WritePointsDirectly writes a batch of points synchronously. Batching avoids
+// one HTTP request per point when replaying a large local cache.
+func (c *Client) WritePointsDirectly(ctx context.Context, dataPoints []DataPoint) error {
+	if len(dataPoints) == 0 {
+		return nil
+	}
+
 	_, err := c.circuitBreaker.Execute(func() (interface{}, error) {
-		p := write.NewPoint(
-			c.measurement,
-			map[string]string{
-				"source": "octopus_home_mini",
-			},
-			map[string]interface{}{
-				"consumption_delta": dp.ConsumptionDelta,
-				"demand":            dp.Demand,
-				"cost_delta":        dp.CostDelta,
-				"consumption":       dp.Consumption,
-			},
-			dp.Timestamp,
-		)
+		points := make([]*write.Point, 0, len(dataPoints))
+		for _, dp := range dataPoints {
+			points = append(points, write.NewPoint(
+				c.measurement,
+				map[string]string{
+					"source": "octopus_home_mini",
+				},
+				map[string]interface{}{
+					"consumption_delta": dp.ConsumptionDelta,
+					"demand":            dp.Demand,
+					"cost_delta":        dp.CostDelta,
+					"consumption":       dp.Consumption,
+				},
+				dp.Timestamp,
+			))
+		}
 
 		writeAPIBlocking := c.client.WriteAPIBlocking(c.org, c.bucket)
-		return nil, writeAPIBlocking.WritePoint(ctx, p)
+		return nil, writeAPIBlocking.WritePoint(ctx, points...)
 	})
 	return err
 }

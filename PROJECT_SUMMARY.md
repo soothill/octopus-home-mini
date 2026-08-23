@@ -7,7 +7,7 @@ A production-ready Go application that monitors Octopus Energy Home Mini devices
 ## Complete Feature Set
 
 ### ✅ Core Functionality
-- **Real-time Data Collection**: Polls Octopus Energy GraphQL API every 30 seconds
+- **Real-time Data Collection**: Polls Octopus Energy GraphQL API every five minutes with scheduling jitter while preserving 10-second samples
 - **InfluxDB Integration**: Stores metrics with proper timestamps and tags
 - **Automatic Caching**: Local JSON-based cache for offline resilience
 - **Smart Sync**: Automatically syncs cached data when connection restored
@@ -243,7 +243,7 @@ Includes:
 - **Authentication**: JWT token via API key
 - **Data Resolution**: 10 seconds
 - **Rate Limit**: 100 calls/hour
-- **Refresh Rate**: ~30 seconds
+- **Refresh Rate**: ~5 minutes while preserving all 10-second telemetry samples
 
 ### InfluxDB Line Protocol
 ```
@@ -260,7 +260,7 @@ energy_consumption,source=octopus_home_mini consumption_delta=0.5,demand=1.2,cos
 
 ### API Rate Limiting
 - Configurable poll interval
-- Default 30s (well under 100/hour limit)
+- Default 60s, with immediate 10x polling backoff when the API asks the client to slow down
 - Consecutive error tracking
 - Graceful backoff
 

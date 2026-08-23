@@ -77,6 +77,49 @@ func TestPoll_FetchError(t *testing.T) {
 	assert.Equal(t, 3, monitor.getBackoffFactor())
 }
 
+func TestPoll_RateLimitError(t *testing.T) {
+	cfg := &config.Config{
+		PollInterval:              1 * time.Minute,
+		ConsecutiveErrorThreshold: 3,
+		MaxBackoffFactor:          3,
+	}
+	mockClock := &MockClock{now: time.Now()}
+	mockOctopusClient := &MockOctopusClient{
+		getTelemetryFunc: func() ([]octopus.TelemetryData, error) {
+			return nil, &octopus.RateLimitError{Err: errors.New("queries are too aggressive, back off")}
+		},
+	}
+
+	monitor := New(cfg, mockOctopusClient, nil, nil, nil)
+	monitor.Clock = mockClock
+
+	monitor.poll()
+
+	assert.Equal(t, 1, monitor.getConsecutiveErr())
+	assert.True(t, monitor.getDegradedMode())
+	assert.Equal(t, 3, monitor.getBackoffFactor())
+}
+
+func TestNextPollIntervalUsesBackoffAndJitter(t *testing.T) {
+	cfg := &config.Config{PollInterval: 5 * time.Minute}
+	monitor := New(cfg, nil, nil, nil, nil)
+	monitor.setBackoffFactor(3)
+	monitor.Jitter = func(base time.Duration) time.Duration {
+		return base + 10*time.Second
+	}
+
+	assert.Equal(t, 15*time.Minute+10*time.Second, monitor.nextPollInterval())
+}
+
+func TestAddPollJitterStaysWithinBounds(t *testing.T) {
+	base := 5 * time.Minute
+	for i := 0; i < 100; i++ {
+		got := addPollJitter(base)
+		assert.GreaterOrEqual(t, got, base-maxPollJitter)
+		assert.LessOrEqual(t, got, base+maxPollJitter)
+	}
+}
+
 func TestPoll_FetchSuccess(t *testing.T) {
 	cfg := &config.Config{
 		PollInterval: 1 * time.Minute,

@@ -80,7 +80,7 @@ echo ""
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${BLUE}Application Settings${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-check_optional "POLL_INTERVAL_SECONDS" "$POLL_INTERVAL_SECONDS" "30"
+check_optional "POLL_INTERVAL_SECONDS" "$POLL_INTERVAL_SECONDS" "300"
 check_optional "CACHE_DIR" "$CACHE_DIR" "./cache"
 check_optional "LOG_LEVEL" "$LOG_LEVEL" "info"
 echo ""
@@ -121,9 +121,9 @@ if ! [[ "$POLL_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] && [ -n "$POLL_INTERVAL_SECONDS"
 else
     echo -e "${GREEN}✓ Poll interval is valid${NC}"
 
-    # Warn if poll interval is too low
-    if [ -n "$POLL_INTERVAL_SECONDS" ] && [ "$POLL_INTERVAL_SECONDS" -lt 10 ]; then
-        echo -e "${YELLOW}⚠ Poll interval < 10s may cause API rate limit issues${NC}"
+    # Warn when a shared Octopus account is likely to exceed its API quota.
+    if [ -n "$POLL_INTERVAL_SECONDS" ] && [ "$POLL_INTERVAL_SECONDS" -lt 300 ]; then
+        echo -e "${YELLOW}⚠ Poll interval < 300s may cause rate limits when other integrations share this account${NC}"
         WARNINGS=$((WARNINGS + 1))
     fi
 fi
